@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, STATE_SENTINEL, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -44,8 +44,9 @@ test('should create the state dir 0700 and markers 0600', async () => {
   await runHook({ sessionId, store: storeWithView(sessionId, view), stateDir });
 
   assert.equal(statSync(stateDir).mode & 0o777, 0o700, 'state dir is 0700');
-  const sessionDirs = readdirSync(stateDir);
+  const sessionDirs = readdirSync(stateDir).filter((name) => name !== STATE_SENTINEL);
   assert.equal(sessionDirs.length, 1, 'one session subdir');
+  assert.equal(statSync(join(stateDir, STATE_SENTINEL)).mode & 0o777, 0o600, 'state mark is 0600');
   const sessionDir = join(stateDir, sessionDirs[0]);
   const markers = readdirSync(sessionDir);
   assert.ok(markers.length > 0, 'at least one marker');
@@ -66,3 +67,24 @@ test('should exit 0 silently and write nothing when session_id is not a plain id
   assert.equal(existsSync(stateDir), false, 'state dir not created');
   assert.deepEqual(readdirSync(parent), [], 'nothing written next to the state dir');
 });
+
+// User behaviour: malformed hook input (a session_id that is not a string) never injects anything.
+// Business rule: session_id must be a string before it is checked against the plain-id rule; a non-string id
+// would otherwise be coerced (null -> "null", ["x"] -> "x") and match.
+for (const [label, badId] of [
+  ['null', () => null],
+  ['an array', (id) => [id]],
+]) {
+  test(`should print nothing when session_id is ${label}`, async () => {
+    const realId = randomUUID();
+    const stdin = JSON.stringify({
+      session_id: badId(realId),
+      transcript_path: `/x/${realId}.jsonl`,
+      hook_event_name: 'PostToolUse',
+    });
+
+    const result = await runHook({ stdin, store: storeWithView(realId, view) });
+
+    assertNothingShown(result);
+  });
+}

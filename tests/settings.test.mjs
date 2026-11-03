@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
-import { injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
+import { aged, injectedContext, markStateDir, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -58,15 +58,6 @@ for (const value of ['on', '', '0', 'false', 'offline', 'OFF?']) {
 const DAY_S = 24 * 60 * 60;
 const nowS = () => Math.floor(Date.now() / 1000);
 
-/** Create a file (or dir when `dir: true`) at `path` with an mtime `ageDays` days ago. */
-function aged(path, ageDays, { dir = false } = {}) {
-  if (dir) mkdirSync(path, { recursive: true });
-  else writeFileSync(path, '');
-  const t = nowS() - ageDays * DAY_S;
-  utimesSync(path, t, t);
-  return path;
-}
-
 /** Run the hook once for a fresh, unrelated session that has a view, against `stateDir`. */
 function runUnrelated(stateDir) {
   const sessionId = randomUUID();
@@ -77,7 +68,7 @@ test('should delete markers and session dirs older than 30 days and keep newer o
   // User behaviour: the plugin does not pile up state forever on the user's disk.
   // Business rule: markers older than 30 days are deleted; a session dir is deleted once pruning leaves it
   // empty; newer markers, and a freshly created empty session dir, are kept.
-  const stateDir = tempDir();
+  const stateDir = markStateDir(tempDir());
   const oldDir = join(stateDir, 'old-session');
   const newDir = join(stateDir, 'new-session');
   const mixedDir = join(stateDir, 'mixed-session');
@@ -111,6 +102,7 @@ test('should never delete anything outside the state dir', async () => {
   const parent = tempDir();
   const stateDir = join(parent, 'state');
   mkdirSync(stateDir);
+  markStateDir(stateDir);
   const sibling = aged(join(parent, 'sibling-file'), 400);
   const outsideDir = aged(join(tempDir(), 'outside-dir'), 400, { dir: true });
   const outsideFile = aged(join(outsideDir, 'precious'), 400);
@@ -128,6 +120,47 @@ test('should never delete anything outside the state dir', async () => {
   assert.ok(existsSync(outsideFile), 'file reached through a symlink kept');
 });
 
+test('should prune only marker-named files inside plain-id session dirs', async () => {
+  // User behaviour: pointing HEADS_UP_STATE_DIR at a folder that also holds the user's files never deletes them.
+  // Business rule: the prune only touches dirs named like a session id, and inside them only old files named
+  // like a marker (16 lowercase hex chars, or .shape-warned). Anything else is kept, whatever its age.
+  const stateDir = markStateDir(tempDir());
+  const topFile = aged(join(stateDir, 'notes.txt'), 400);
+  const plainDir = aged(join(stateDir, 'plain-session'), 400, { dir: true });
+  const userFile = aged(join(plainDir, 'photo.jpg'), 400);
+  const upperHex = aged(join(plainDir, 'CCCCCCCCCCCCCCCC'), 400);
+  const hexMarker = aged(join(plainDir, 'aaaaaaaaaaaaaaaa'), 400);
+  const warnDir = aged(join(stateDir, 'warn-session'), 400, { dir: true });
+  const warnMarker = aged(join(warnDir, '.shape-warned'), 400);
+  const otherDir = aged(join(stateDir, 'My Documents'), 400, { dir: true });
+  const otherMarker = aged(join(otherDir, 'bbbbbbbbbbbbbbbb'), 400);
+  for (const dir of [plainDir, warnDir, otherDir]) aged(dir, 400, { dir: true });
+
+  const result = await runUnrelated(stateDir);
+
+  assert.ok(result.json, 'the unrelated notice is still injected');
+  assert.equal(existsSync(hexMarker), false, 'old hex marker in a plain-id dir deleted');
+  assert.equal(existsSync(warnMarker), false, 'old .shape-warned marker in a plain-id dir deleted');
+  assert.ok(existsSync(topFile), 'old non-marker file at the top of the state dir kept');
+  assert.ok(existsSync(userFile), 'old non-marker file in a plain-id dir kept');
+  assert.ok(existsSync(upperHex), 'old file that is not exactly a lowercase hex marker kept');
+  assert.ok(existsSync(otherMarker), 'old marker-named file in a dir whose name is not a plain id kept');
+});
+
+test('should also prune on a run that delivers the changed-shape warning', async () => {
+  // User behaviour: housekeeping keeps working even while heads-ups are off because the store format changed.
+  // Business rule: every run that delivers something (a notice or the shape warning) prunes after delivering.
+  const stateDir = markStateDir(tempDir());
+  const oldDir = aged(join(stateDir, 'old-session'), 31, { dir: true });
+  const oldMarker = aged(join(oldDir, 'aaaaaaaaaaaaaaaa'), 31);
+  aged(oldDir, 31, { dir: true });
+
+  const result = await runHook({ sessionId: randomUUID(), store: { seen: [] }, stateDir });
+
+  assert.ok(injectedContext(result).includes('store format changed'), 'the shape warning is delivered');
+  assert.equal(existsSync(oldMarker), false, 'old marker deleted');
+});
+
 test('should still inject when pruning fails', async (t) => {
   // User behaviour: a housekeeping problem never costs the user a heads-up.
   // Business rule: prune errors are ignored; the notice is still injected.
@@ -135,7 +168,7 @@ test('should still inject when pruning fails', async (t) => {
     t.skip('running as root: chmod 000 does not stop reads');
     return;
   }
-  const stateDir = tempDir();
+  const stateDir = markStateDir(tempDir());
   const locked = aged(join(stateDir, 'locked-session'), 31, { dir: true });
   aged(join(locked, 'eeeeeeeeeeeeeeee'), 31);
   chmodSync(locked, 0o000);

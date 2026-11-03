@@ -70,3 +70,55 @@ test('should still inject by session_id when transcript_path is missing', async 
 
   assert.ok(injectedContext(result).includes(view.line));
 });
+
+test('should deliver the views stored under both ids of a resumed session, one per run', async () => {
+  // User behaviour: when a resumed session has a heads-up under its original id and another under its new id,
+  // the agent gets both, one after the other, instead of only ever the first.
+  // Business rule: matching entries with a view are tried in store order; one already handled is skipped, the
+  // first unhandled one is delivered (one notice per run), and nothing is printed once all are handled.
+  const originalId = randomUUID();
+  const runtimeId = randomUUID();
+  const stateDir = tempDir();
+  const a = { line: 'Notice A under the original id' };
+  const b = { line: 'Notice B under the runtime id' };
+  const store = {
+    sessions: [
+      { id: originalId, tag: 'Heads up', view: a },
+      { id: runtimeId, tag: 'Heads up', view: b },
+    ],
+    seen: [],
+  };
+  const run = () => runHook({ sessionId: runtimeId, transcriptPath: `/x/${originalId}.jsonl`, store, stateDir });
+
+  const first = await run();
+  const second = await run();
+  const third = await run();
+
+  assert.ok(injectedContext(first).includes(a.line), 'run 1 delivers A');
+  const secondContext = injectedContext(second);
+  assert.ok(secondContext.includes(b.line), 'run 2 delivers B');
+  assert.ok(!secondContext.includes(a.line), 'run 2 delivers only B');
+  assertNothingShown(third);
+});
+
+test('should deliver a line mirrored under both ids of a resumed session only once', async () => {
+  // User behaviour: when Claude Code stores the same heads-up under both ids of a resumed session, the agent
+  // is told about it once, not twice.
+  // Business rule: matching views are deduplicated by line; a mirrored line is tried only under its first entry.
+  const originalId = randomUUID();
+  const runtimeId = randomUUID();
+  const stateDir = tempDir();
+  const store = {
+    sessions: [
+      { id: originalId, tag: 'Heads up', view },
+      { id: runtimeId, tag: 'Heads up', view },
+    ],
+    seen: [],
+  };
+  const run = () => runHook({ sessionId: runtimeId, transcriptPath: `/x/${originalId}.jsonl`, store, stateDir });
+
+  const results = [await run(), await run(), await run()];
+
+  assert.equal(results.filter((r) => r.stdout !== '').length, 1, 'delivered exactly once over 3 runs');
+  assert.ok(injectedContext(results[0]).includes(view.line), 'the first run delivers it');
+});

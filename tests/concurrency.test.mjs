@@ -37,14 +37,15 @@ const RACE_WINDOW_MS = 1500;
  * skew even on a loaded CI runner, so the detection never depends on timing luck.
  */
 function nonAtomicCopy() {
-  const atomicClaim = "openSync(join(dir, name), 'wx', 0o600);";
+  // The claim opens the marker by a name relative to the verified session dir (the process cwd).
+  const atomicClaim = "closeSync(openSync(name, 'wx', 0o600));";
   const source = readFileSync(hookScript, 'utf8');
   assert.ok(source.includes(atomicClaim), 'the real script still claims with an atomic wx open');
   const broken = source.replace(
     atomicClaim,
-    "const p = join(dir, name); if (existsSync(p)) throw new Error('claimed');" +
+    "if (existsSync(name)) throw new Error('claimed');" +
       ` Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${RACE_WINDOW_MS});` +
-      " writeFileSync(p, '', { mode: 0o600 });",
+      " writeFileSync(name, '', { mode: 0o600 });",
   );
   const path = join(tempDir(), 'heads-up-nonatomic.mjs');
   writeFileSync(path, "import { existsSync, writeFileSync } from 'node:fs';\n" + broken);

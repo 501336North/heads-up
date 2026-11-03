@@ -24,7 +24,12 @@ for (const event of ['PostToolUse', 'UserPromptSubmit']) {
     const context = injectedContext(result);
     assert.equal(result.json.hookSpecificOutput.hookEventName, event);
     assert.ok(context.includes(view.line), 'mentions the heads-up line');
-    assert.ok(context.includes(view.explanation), 'mentions the explanation');
+    // The fixture's newline is collapsed to a space, so notice text can never add lines of its own (S2),
+    // and the explanation is quoted on its own "> " line.
+    assert.ok(
+      context.includes('> Files in dist/ are older than src/. Rebuild before testing.'),
+      'mentions the explanation',
+    );
     assert.ok(context.includes('Check whether it is true'), 'asks the agent to check it');
     assert.ok(context.includes('tell the user'), 'asks the agent to tell the user');
   });

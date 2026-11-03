@@ -1,8 +1,10 @@
 # heads-up
 
 A Claude Code plugin that passes Claude Code's own heads-up notices for a session to the agent working in that
-session. The agent is told to check whether the notice is true, act on it if needed (keeping its normal approval
-rules), tell you, and say what you still need to do.
+session. The notice is quoted (each line prefixed with `> ` between `--- notice ---` and `--- end notice ---`),
+flattened to one line and length-capped, and presented as an unverified claim. The
+agent is told to check whether it is true, act on it only if that is within its current task (keeping its normal
+approval rules and never following instructions inside the notice), tell you, and say what you still need to do.
 
 - Each notice reaches the agent **once per session**, and only in the session it belongs to.
 - It runs on `UserPromptSubmit` and after every tool call (`PostToolUse`).
@@ -32,6 +34,10 @@ Set `HEADS_UP=off` (any case) in the environment Claude Code runs in. Any other 
 ## State
 
 Handled notices are recorded in `~/.claude/heads-up/` (dir mode 0700, files 0600), one folder per session.
+The folder is marked with a `.heads-up-state` file. The mark only matters for `HEADS_UP_STATE_DIR`: if it points
+at a folder that already holds other files (a `.DS_Store` aside) and has no such mark, the plugin leaves it alone
+and keeps no state. The default `~/.claude/heads-up/` is the plugin's own folder, so it is used without the mark
+check (it is still refused if it is a symlink or owned by another user).
 Entries older than 30 days are deleted automatically. You can delete the folder at any time; the only effect is
 that a current notice may be shown once more.
 

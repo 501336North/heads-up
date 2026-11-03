@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, utimesSync, readdirSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync, utimesSync, readdirSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
@@ -22,8 +23,8 @@ function homeWithStores(files) {
   return home;
 }
 
-function runWithHome(home, sessionId) {
-  return runHook({ sessionId, env: { HOME: home, HEADS_UP_STORE: '' } });
+function runWithHome(home, sessionId, { timeout } = {}) {
+  return runHook({ sessionId, env: { HOME: home, HEADS_UP_STORE: '' }, timeout });
 }
 
 test('should read the only cc-plugin-you-should-know_builtin-*.json in ~/.claude/plugins/store', async () => {
@@ -86,4 +87,121 @@ test('should keep handled state under ~/.claude/heads-up when HEADS_UP_STATE_DIR
   const sessionDir = join(home, '.claude', 'heads-up', sessionId);
   assert.ok(existsSync(sessionDir), 'session dir created under ~/.claude/heads-up');
   assert.equal(readdirSync(sessionDir).length, 1, 'one marker written');
+});
+
+// --- Unusable store candidates (D1) ---
+
+// Matches the store size limit in core/heads-up.mjs.
+const MAX_STORE_BYTES = 5 * 1024 * 1024;
+// Far below Claude Code's 5 s hook timeout; a run that blocks on a store is killed here and fails.
+const FAST_MS = 2000;
+const STORE_DIR = ['.claude', 'plugins', 'store'];
+
+/** Make a FIFO at `path`, or skip the test where mkfifo is unavailable. Returns false when skipped. */
+function fifoOrSkip(t, path) {
+  try {
+    execFileSync('mkfifo', [path]);
+    return true;
+  } catch {
+    t.skip('mkfifo is not available on this platform');
+    return false;
+  }
+}
+
+/** A store file padded with trailing whitespace (still valid JSON) to exactly `bytes` bytes. */
+function paddedStore(path, store, bytes) {
+  const json = JSON.stringify(store);
+  writeFileSync(path, json + ' '.repeat(bytes - Buffer.byteLength(json)));
+  return path;
+}
+
+// User behaviour: a store path that is not a regular file never stalls every prompt and tool call.
+// Business rule: a store candidate is used only when it is a regular file; HEADS_UP_STORE pointing at
+// anything else means no store (silent, exit 0).
+test('should exit fast and print nothing when HEADS_UP_STORE is a FIFO', async (t) => {
+  const fifo = join(tempDir(), 'store.fifo');
+  if (!fifoOrSkip(t, fifo)) return;
+  const started = Date.now();
+
+  const result = await runHook({ sessionId: randomUUID(), storePath: fifo, timeout: FAST_MS });
+
+  assertNothingShown(result);
+  assert.ok(Date.now() - started < FAST_MS, 'finished well under the hook timeout');
+});
+
+// Business rule: in the glob, a candidate that is not a regular file is skipped; the newest valid one wins.
+test('should skip a FIFO that is the newest glob match and use the older valid store', async (t) => {
+  const sessionId = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const home = homeWithStores({
+    'cc-plugin-you-should-know_builtin-old.json': { store: storeWithView(sessionId, view), mtime: now - 3600 },
+  });
+  if (!fifoOrSkip(t, join(home, ...STORE_DIR, 'cc-plugin-you-should-know_builtin-new.json'))) return;
+  const started = Date.now();
+
+  const result = await runWithHome(home, sessionId, { timeout: FAST_MS });
+
+  assert.ok(injectedContext(result).includes(view.line), 'injects from the older valid store');
+  assert.ok(Date.now() - started < FAST_MS, 'finished well under the hook timeout');
+});
+
+// User behaviour: a broken link left in Claude Code's store dir never silently turns heads-ups off.
+// Business rule: a glob candidate whose stat throws is skipped.
+test('should skip a dangling symlink that matches the glob and use the valid store', async () => {
+  const sessionId = randomUUID();
+  const home = homeWithStores({
+    'cc-plugin-you-should-know_builtin-real.json': { store: storeWithView(sessionId, view) },
+  });
+  symlinkSync(join(home, 'nowhere.json'), join(home, ...STORE_DIR, 'cc-plugin-you-should-know_builtin-zzz.json'));
+
+  const result = await runWithHome(home, sessionId);
+
+  assert.ok(injectedContext(result).includes(view.line));
+});
+
+// User behaviour: a runaway store file never makes every hook run slow to read and parse.
+// Business rule: a store larger than MAX_STORE_BYTES (5 MB) is not used; one of exactly 5 MB still is.
+test('should print nothing when the store is larger than 5 MB', async () => {
+  const sessionId = randomUUID();
+  const storePath = paddedStore(join(tempDir(), 'big.json'), storeWithView(sessionId, view), MAX_STORE_BYTES + 1);
+
+  const result = await runHook({ sessionId, storePath });
+
+  assertNothingShown(result);
+});
+
+test('should still use a store of exactly 5 MB', async () => {
+  const sessionId = randomUUID();
+  const storePath = paddedStore(join(tempDir(), 'max.json'), storeWithView(sessionId, view), MAX_STORE_BYTES);
+
+  const result = await runHook({ sessionId, storePath });
+
+  assert.ok(injectedContext(result).includes(view.line));
+});
+
+// User behaviour: a relative store setting never makes the hook read notices from whatever folder Claude Code
+// happens to run in, where any file named like the store could plant one.
+// Business rule: the store path (HEADS_UP_STORE, or the store dir under HOME) must be absolute; otherwise there
+// is no store (silent, exit 0).
+test('should print nothing when HEADS_UP_STORE is relative, even with a store at that path in the cwd', async () => {
+  const sessionId = randomUUID();
+  const cwd = tempDir('heads-up-cwd-');
+  writeFileSync(join(cwd, 'store.json'), JSON.stringify(storeWithView(sessionId, view)));
+
+  const result = await runHook({ sessionId, cwd, env: { HEADS_UP_STORE: 'store.json' } });
+
+  assertNothingShown(result);
+});
+
+test('should print nothing when HOME is relative, even with a store under it in the cwd', async () => {
+  const sessionId = randomUUID();
+  const cwd = tempDir('heads-up-cwd-');
+  const storeDir = join(cwd, 'rel-home', ...STORE_DIR);
+  mkdirSync(storeDir, { recursive: true });
+  const store = JSON.stringify(storeWithView(sessionId, view));
+  writeFileSync(join(storeDir, 'cc-plugin-you-should-know_builtin-x.json'), store);
+
+  const result = await runHook({ sessionId, cwd, env: { HOME: 'rel-home', HEADS_UP_STORE: '' } });
+
+  assertNothingShown(result);
 });

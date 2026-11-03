@@ -5,7 +5,16 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, symlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { hookScript, injectedContext, repoRoot, runHook, storeWithView, tempDir, writeStore } from './helpers.mjs';
+import {
+  hookScript,
+  inheritedEnv,
+  injectedContext,
+  repoRoot,
+  runHook,
+  storeWithView,
+  tempDir,
+  writeStore,
+} from './helpers.mjs';
 
 const readJson = (rel) => JSON.parse(readFileSync(join(repoRoot, rel), 'utf8'));
 
@@ -59,7 +68,7 @@ test('should inject when the registered command is run the way Claude Code runs 
     shell: true,
     cwd: tempDir(),
     env: {
-      ...process.env,
+      ...inheritedEnv(),
       PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`,
       HOME: tempDir('heads-up-home-'),
       HEADS_UP_STORE: writeStore(tempDir(), storeWithView(sessionId, view)),
