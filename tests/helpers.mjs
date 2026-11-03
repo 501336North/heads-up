@@ -7,7 +7,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const hookScript = join(repoRoot, 'core', 'heads-up.mjs');
+/** The real hook script; runHook's `script` option can point at another copy. */
+export const hookScript = join(repoRoot, 'core', 'heads-up.mjs');
 
 /** A fresh, unique temp directory. */
 export function tempDir(prefix = 'heads-up-test-') {
@@ -30,6 +31,7 @@ export function storeWithView(id, view, { tag = 'Heads up', seen = [] } = {}) {
  * Run the hook once.
  * - `store`: object written to a fresh store file (omit and pass `storePath` to point at a file directly).
  * - `stateDir`: pass the same value across runs to share handled markers; fresh temp dir otherwise.
+ * - `script`: path of the hook script to run; defaults to the real core/heads-up.mjs.
  * - `stdin`: raw stdin string; defaults to hook JSON built from event/sessionId/transcriptPath.
  * Resolves to { code, stdout, stderr, json } where json is the parsed stdout or null.
  */
@@ -42,6 +44,7 @@ export function runHook({
   stateDir = tempDir(),
   env = {},
   stdin,
+  script = hookScript,
 } = {}) {
   const resolvedStorePath = storePath ?? writeStore(tempDir(), store ?? { sessions: [], seen: [] });
   const input =
@@ -53,7 +56,7 @@ export function runHook({
       cwd: repoRoot,
     });
 
-  const child = spawn(process.execPath, [hookScript], {
+  const child = spawn(process.execPath, [script], {
     cwd: repoRoot,
     env: {
       ...process.env,
