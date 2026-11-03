@@ -106,6 +106,8 @@ function contextFor(input) {
 }
 
 try {
+  // Off switch (AC-005.1), checked before reading stdin or any file. Exactly "off", any case; nothing else.
+  if (process.env.HEADS_UP?.trim().toLowerCase() === 'off') process.exit(0);
   const input = JSON.parse(readFileSync(0, 'utf8'));
   const additionalContext = contextFor(input);
   if (additionalContext) {
