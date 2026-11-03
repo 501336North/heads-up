@@ -1,6 +1,6 @@
 import { readFileSync, mkdirSync, openSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 
 // Frames the notice as a claim to verify, keeps normal approval rules, and asks for a report to the user.
 const INSTRUCTION =
@@ -18,10 +18,15 @@ if (!ANSWERED_EVENTS.includes(input.hook_event_name)) process.exit(0);
 if (!PLAIN_ID.test(input.session_id)) process.exit(0);
 
 const store = JSON.parse(readFileSync(process.env.HEADS_UP_STORE, 'utf8'));
-const view = store.sessions.find((s) => s.id === input.session_id)?.view;
+// A resumed session keeps its original id in the transcript file name (DESIGN A1).
+const transcriptId = basename(input.transcript_path, '.jsonl');
+const ids = [input.session_id, transcriptId].filter((id) => PLAIN_ID.test(id));
+const entry = store.sessions.find((s) => ids.includes(s.id) && s.view);
 
-if (view) {
-  const sessionDir = join(process.env.HEADS_UP_STATE_DIR, input.session_id);
+if (entry) {
+  const { view } = entry;
+  // Keyed on the matched entry's id, so the notice is handled once whichever id the run arrives under.
+  const sessionDir = join(process.env.HEADS_UP_STATE_DIR, entry.id);
   mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
   const marker = createHash('sha256').update(view.line).digest('hex').slice(0, 16);
   // Creating the marker is the claim: 'wx' fails with EEXIST if this notice was already handled.
