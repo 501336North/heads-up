@@ -21,7 +21,7 @@ approval rules and never following instructions inside the notice), tell you, an
 ## Install (from a local checkout)
 
 ```sh
-git clone <this repo> ~/dev/heads-up
+git clone https://github.com/501336North/heads-up.git ~/dev/heads-up
 claude --plugin-dir ~/dev/heads-up
 ```
 
