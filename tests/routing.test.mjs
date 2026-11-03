@@ -66,3 +66,16 @@ for (const badId of ['..', '.', 'a.b']) {
     assert.deepEqual(readdirSync(parent), [], 'nothing written in or next to the state dir');
   });
 }
+
+test('should still inject by session_id when transcript_path is missing', async () => {
+  // User behaviour: a session gets its heads-up even if Claude Code sends no transcript path.
+  // Business rule: the transcript id is an extra candidate; its absence never blocks the session_id match.
+  const sessionId = randomUUID();
+  const stdin = JSON.stringify({ session_id: sessionId, hook_event_name: 'PostToolUse' });
+
+  const result = await runHook({ stdin, store: storeWithView(sessionId, view) });
+
+  assert.equal(result.code, 0);
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+});

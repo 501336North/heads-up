@@ -1,6 +1,7 @@
 import { readFileSync, mkdirSync, openSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Frames the notice as a claim to verify, keeps normal approval rules, and asks for a report to the user.
 const INSTRUCTION =
@@ -16,35 +17,82 @@ const PLAIN_ID = /^[A-Za-z0-9_-]{1,128}$/;
 // The only events whose additionalContext reaches the agent; others must not claim a notice.
 const ANSWERED_EVENTS = ['UserPromptSubmit', 'PostToolUse'];
 
-try {
-  const input = JSON.parse(readFileSync(0, 'utf8'));
-  if (!ANSWERED_EVENTS.includes(input.hook_event_name)) process.exit(0);
-  if (!PLAIN_ID.test(input.session_id)) process.exit(0);
+const isString = (v) => typeof v === 'string';
+const isOptionalString = (v) => v === undefined || isString(v);
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function isExpectedShape(store) {
+  return (
+    isObject(store) &&
+    Array.isArray(store.sessions) &&
+    store.sessions.every(
+      (e) =>
+        isObject(e) &&
+        isString(e.id) &&
+        isOptionalString(e.tag) &&
+        (e.view === undefined ||
+          (isObject(e.view) && isString(e.view.line) && isOptionalString(e.view.explanation))),
+    )
+  );
+}
+
+function pluginVersion() {
+  try {
+    const path = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude-plugin', 'plugin.json');
+    return JSON.parse(readFileSync(path, 'utf8')).version;
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Claim a one-time marker under <state>/<key>/ (key is an already-validated id).
+ * 'wx' throws EEXIST when it was claimed before; the top-level catch turns that into a silent exit.
+ */
+function claim(key, name) {
+  const dir = join(process.env.HEADS_UP_STATE_DIR, key);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  openSync(join(dir, name), 'wx', 0o600);
+}
+
+/** The text to give the agent for this hook run, or undefined for nothing. */
+function contextFor(input) {
+  if (!ANSWERED_EVENTS.includes(input.hook_event_name)) return undefined;
+  if (!PLAIN_ID.test(input.session_id)) return undefined;
 
   const store = JSON.parse(readFileSync(process.env.HEADS_UP_STORE, 'utf8'));
-  // A resumed session keeps its original id in the transcript file name (DESIGN A1).
-  const transcriptId = basename(input.transcript_path, '.jsonl');
-  const ids = [input.session_id, transcriptId].filter((id) => PLAIN_ID.test(id));
-  const entry = store.sessions.find((s) => ids.includes(s.id) && s.view);
+  if (!isExpectedShape(store)) {
+    // Warn once per session that Claude Code changed the store and heads-ups are off (AC-003.2).
+    claim(input.session_id, '.shape-warned');
+    return (
+      `${DEFAULT_TAG}: the heads-up store format changed, so heads-ups are off for now ` +
+      `(heads-up plugin version ${pluginVersion()}). Tell the user.`
+    );
+  }
 
-  if (entry) {
-    const { view } = entry;
-    // Keyed on the matched entry's id, so the notice is handled once whichever id the run arrives under.
-    const sessionDir = join(process.env.HEADS_UP_STATE_DIR, entry.id);
-    mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
-    const marker = createHash('sha256').update(view.line).digest('hex').slice(0, 16);
-    // Creating the marker is the claim: 'wx' throws EEXIST if this notice was already handled,
-    // and the catch below turns that (like any failure) into a silent exit.
-    openSync(join(sessionDir, marker), 'wx', 0o600);
-    // Label first, then the optional explanation, then the check-act-report instruction.
-    const additionalContext = [`${entry.tag ?? DEFAULT_TAG}: ${view.line}`, view.explanation, INSTRUCTION]
-      .filter(Boolean)
-      .join('\n');
+  // A resumed session keeps its original id in the transcript file name (DESIGN A1).
+  // A missing or non-string transcript_path simply adds no candidate.
+  const transcriptIds = typeof input.transcript_path === 'string' ? [basename(input.transcript_path, '.jsonl')] : [];
+  const ids = [input.session_id, ...transcriptIds].filter((id) => PLAIN_ID.test(id));
+  const entry = store.sessions.find((s) => ids.includes(s.id) && s.view);
+  if (!entry) return undefined;
+
+  const { view } = entry;
+  // Keyed on the matched entry's id, so the notice is handled once whichever id the run arrives under.
+  claim(entry.id, createHash('sha256').update(view.line).digest('hex').slice(0, 16));
+  // Label first, then the optional explanation, then the check-act-report instruction.
+  return [`${entry.tag ?? DEFAULT_TAG}: ${view.line}`, view.explanation, INSTRUCTION].filter(Boolean).join('\n');
+}
+
+try {
+  const input = JSON.parse(readFileSync(0, 'utf8'));
+  const additionalContext = contextFor(input);
+  if (additionalContext) {
     process.stdout.write(
       JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext } }),
     );
   }
 } catch {
   // Never break a session: any failure means "no notice", exit 0, nothing on stdout or stderr.
-  process.exit(0);
+  process.exitCode = 0;
 }

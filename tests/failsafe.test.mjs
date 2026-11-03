@@ -67,21 +67,65 @@ test('should exit 0 with no output when the state dir cannot be created', async 
   assertSilentSuccess(await runHook({ sessionId, store, stateDir: join(blocker, 'state') }));
 });
 
-test('should exit 0 with no output when transcript_path is missing', async () => {
+test('should exit 0 with no output when transcript_path is missing and nothing matches', async () => {
   // User behaviour: hook input without a transcript path does not crash the hook.
   // Business rule: missing optional input fields never surface as an error.
   const stdin = JSON.stringify({ session_id: randomUUID(), hook_event_name: 'PostToolUse' });
 
-  assertSilentSuccess(await runHook({ stdin }));
+  assertSilentSuccess(await runHook({ stdin, store: { sessions: [], seen: [] } }));
 });
 
-// User behaviour: if Claude Code changes its store format, the session keeps working.
-// Business rule: a store without a sessions array is never a crash (Task 7 adds a one-time warning).
-for (const [label, store] of [
-  ['missing', { seen: [] }],
-  ['not an array', { sessions: { id: 'x' }, seen: [] }],
-]) {
-  test(`should exit 0 with no output when sessions is ${label}`, async () => {
-    assertSilentSuccess(await runHook({ sessionId: randomUUID(), store }));
+// User behaviour: if Claude Code changes its store format, the agent tells the user once that heads-ups are off,
+// instead of the plugin failing silently forever or crashing the session.
+// Business rule: an unexpected store shape gives one warning per session, naming the plugin version.
+const changedShapes = [
+  ['sessions is missing', { seen: [] }],
+  ['sessions is not an array', { sessions: { id: 'x' }, seen: [] }],
+  ['an entry id is not a string', { sessions: [{ id: 42 }], seen: [] }],
+  ['view.line is a number', { sessions: [{ id: 'abc', view: { line: 7 } }], seen: [] }],
+  ['the store is not an object', null],
+  ['an entry is not an object', { sessions: ['abc'], seen: [] }],
+  ['view is not an object', { sessions: [{ id: 'abc', view: 'text' }], seen: [] }],
+  ['view.explanation is not a string', { sessions: [{ id: 'abc', view: { line: 'x', explanation: 1 } }], seen: [] }],
+  ['tag is not a string', { sessions: [{ id: 'abc', tag: 1 }], seen: [] }],
+];
+
+function assertShapeWarning(result, event = 'PostToolUse') {
+  assert.equal(result.code, 0);
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.equal(result.json.hookSpecificOutput.hookEventName, event);
+  const context = result.json.hookSpecificOutput.additionalContext;
+  assert.ok(context.includes('store format changed'), 'says the store format changed');
+  assert.ok(context.includes('heads-ups are off'), 'says heads-ups are off for now');
+  assert.ok(context.includes('version unknown'), 'names the plugin version (none installed yet)');
+}
+
+for (const [label, store] of changedShapes) {
+  test(`should inject one warning naming the plugin version when ${label}`, async () => {
+    // Written raw so that a null store reaches the hook as-is.
+    const storePath = rawStore(JSON.stringify(store));
+    assertShapeWarning(await runHook({ sessionId: randomUUID(), storePath }));
   });
 }
+
+test('should stay silent on the next run in the same session', async () => {
+  const sessionId = randomUUID();
+  const stateDir = tempDir();
+  const store = changedShapes[1][1];
+
+  const first = await runHook({ sessionId, store, stateDir });
+  const second = await runHook({ sessionId, store, stateDir });
+
+  assertShapeWarning(first);
+  assertSilentSuccess(second);
+});
+
+test('should warn again in a different session', async () => {
+  const stateDir = tempDir();
+  const store = changedShapes[1][1];
+
+  await runHook({ sessionId: randomUUID(), store, stateDir });
+  const other = await runHook({ sessionId: randomUUID(), store, stateDir });
+
+  assertShapeWarning(other);
+});
