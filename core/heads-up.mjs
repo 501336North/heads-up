@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, mkdirSync, openSync, readdirSync, statSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, basename, dirname } from 'node:path';
@@ -72,6 +72,43 @@ function claim(key, name) {
   const dir = join(stateDir(), key);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   openSync(join(dir, name), 'wx', 0o600);
+  try {
+    prune();
+  } catch {
+    // A failed prune never costs the user a heads-up.
+  }
+}
+
+// Handled state older than this is deleted (AC-006.1).
+const PRUNE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Delete marker files older than PRUNE_AFTER_MS in <state>/<session>/, then delete a session dir this pass
+ * emptied. Only real files and dirs inside the state dir are touched: lstat (never follow symlinks), unlink
+ * (files only), rmdir (empty dirs only, never recursive). A session dir that was already empty is kept, since
+ * another run may be about to claim in it. Every error is ignored.
+ */
+function prune() {
+  const cutoff = Date.now() - PRUNE_AFTER_MS;
+  const root = stateDir();
+  for (const session of readdirSync(root)) {
+    try {
+      const sessionDir = join(root, session);
+      if (!lstatSync(sessionDir).isDirectory()) continue;
+      let removed = false;
+      for (const name of readdirSync(sessionDir)) {
+        const path = join(sessionDir, name);
+        const stat = lstatSync(path);
+        if (stat.isFile() && stat.mtimeMs < cutoff) {
+          unlinkSync(path);
+          removed = true;
+        }
+      }
+      if (removed && readdirSync(sessionDir).length === 0) rmdirSync(sessionDir);
+    } catch {
+      // Skip this entry; keep pruning the others.
+    }
+  }
 }
 
 /** The text to give the agent for this hook run, or undefined for nothing. */

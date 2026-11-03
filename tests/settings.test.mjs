@@ -1,8 +1,8 @@
-// Settings: HEADS_UP=off turns the hook into a no-op.
+// Settings and housekeeping: the HEADS_UP=off switch, and pruning of old handled state.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runHook, storeWithView, tempDir } from './helpers.mjs';
 
@@ -51,3 +51,98 @@ for (const value of ['on', '', '0', 'false', 'offline', 'OFF?']) {
     assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
   });
 }
+
+// --- Pruning (AC-006.1) ---
+
+const DAY_S = 24 * 60 * 60;
+const nowS = () => Math.floor(Date.now() / 1000);
+
+/** Create a file (or dir when `dir: true`) at `path` with an mtime `ageDays` days ago. */
+function aged(path, ageDays, { dir = false } = {}) {
+  if (dir) mkdirSync(path, { recursive: true });
+  else writeFileSync(path, '');
+  const t = nowS() - ageDays * DAY_S;
+  utimesSync(path, t, t);
+  return path;
+}
+
+/** Run the hook once for a fresh, unrelated session that has a view, against `stateDir`. */
+function runUnrelated(stateDir) {
+  const sessionId = randomUUID();
+  return runHook({ sessionId, store: storeWithView(sessionId, view), stateDir });
+}
+
+test('should delete markers and session dirs older than 30 days and keep newer ones', async () => {
+  // User behaviour: the plugin does not pile up state forever on the user's disk.
+  // Business rule: markers older than 30 days are deleted; a session dir is deleted once pruning leaves it
+  // empty; newer markers, and a freshly created empty session dir, are kept.
+  const stateDir = tempDir();
+  const oldDir = join(stateDir, 'old-session');
+  const newDir = join(stateDir, 'new-session');
+  const mixedDir = join(stateDir, 'mixed-session');
+  const freshEmptyDir = join(stateDir, 'fresh-empty-session');
+  mkdirSync(oldDir);
+  mkdirSync(newDir);
+  mkdirSync(mixedDir);
+  const oldMarker = aged(join(oldDir, 'aaaaaaaaaaaaaaaa'), 31);
+  const newMarker = aged(join(newDir, 'bbbbbbbbbbbbbbbb'), 1);
+  const mixedOld = aged(join(mixedDir, 'cccccccccccccccc'), 31);
+  const mixedNew = aged(join(mixedDir, 'dddddddddddddddd'), 29);
+  aged(oldDir, 31, { dir: true });
+  aged(newDir, 1, { dir: true });
+  aged(mixedDir, 31, { dir: true });
+  aged(freshEmptyDir, 0, { dir: true });
+
+  const result = await runUnrelated(stateDir);
+
+  assert.ok(result.json, 'the unrelated notice is still injected');
+  assert.equal(existsSync(oldMarker), false, 'old marker deleted');
+  assert.equal(existsSync(oldDir), false, 'session dir left empty by pruning is deleted');
+  assert.ok(existsSync(newMarker), 'new marker kept');
+  assert.equal(existsSync(mixedOld), false, 'old marker in mixed dir deleted');
+  assert.ok(existsSync(mixedNew), 'new marker in mixed dir kept');
+  assert.ok(existsSync(freshEmptyDir), 'a fresh empty session dir is kept (another run may be about to claim in it)');
+});
+
+test('should never delete anything outside the state dir', async () => {
+  // User behaviour: housekeeping can never remove the user's own files.
+  // Business rule: pruning touches only real files and dirs inside the state dir and never follows symlinks.
+  const parent = tempDir();
+  const stateDir = join(parent, 'state');
+  mkdirSync(stateDir);
+  const sibling = aged(join(parent, 'sibling-file'), 400);
+  const outsideDir = aged(join(tempDir(), 'outside-dir'), 400, { dir: true });
+  const outsideFile = aged(join(outsideDir, 'precious'), 400);
+  utimesSync(outsideDir, nowS() - 400 * DAY_S, nowS() - 400 * DAY_S);
+  const sessionDir = aged(join(stateDir, 'some-session'), 31, { dir: true });
+  symlinkSync(outsideFile, join(sessionDir, 'link-to-file'));
+  aged(sessionDir, 31, { dir: true });
+  symlinkSync(outsideDir, join(stateDir, 'link-to-dir'));
+
+  const result = await runUnrelated(stateDir);
+
+  assert.ok(result.json, 'the unrelated notice is still injected');
+  assert.ok(existsSync(sibling), 'file next to the state dir kept');
+  assert.ok(existsSync(outsideDir), 'dir reached through a symlink kept');
+  assert.ok(existsSync(outsideFile), 'file reached through a symlink kept');
+});
+
+test('should still inject when pruning fails', async (t) => {
+  // User behaviour: a housekeeping problem never costs the user a heads-up.
+  // Business rule: prune errors are ignored; the notice is still injected.
+  if (process.getuid?.() === 0) {
+    t.skip('running as root: chmod 000 does not stop reads');
+    return;
+  }
+  const stateDir = tempDir();
+  const locked = aged(join(stateDir, 'locked-session'), 31, { dir: true });
+  aged(join(locked, 'eeeeeeeeeeeeeeee'), 31);
+  chmodSync(locked, 0o000);
+  t.after(() => chmodSync(locked, 0o700));
+
+  const result = await runUnrelated(stateDir);
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, '');
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+});
