@@ -2,7 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { runHook, storeWithView } from './helpers.mjs';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { runHook, storeWithView, tempDir } from './helpers.mjs';
 
 // Text with quotes, newlines and a control character, so the JSON round-trip is exercised.
 const view = {
@@ -68,3 +70,31 @@ test('should not replay seen lines in a new session', async () => {
 
   assertNothingShown(result);
 });
+
+test('should answer UserPromptSubmit with hookEventName UserPromptSubmit', async () => {
+  // User behaviour: a heads-up also reaches the agent when the user sends a prompt, not only after tool calls.
+  // Business rule: the hook output names the event it answers, as Claude Code requires.
+  const sessionId = randomUUID();
+
+  const result = await runHook({ event: 'UserPromptSubmit', sessionId, store: storeWithView(sessionId, view) });
+
+  assert.equal(result.code, 0);
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.equal(result.json.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+});
+
+for (const event of ['Stop', 'PreToolUse']) {
+  test(`should print nothing for any other hook event (${event})`, async () => {
+    // User behaviour: a heads-up is not used up by an event that cannot show it to the agent.
+    // Business rule: only UserPromptSubmit and PostToolUse are answered; other events claim nothing.
+    const sessionId = randomUUID();
+    const stateDir = tempDir();
+
+    const result = await runHook({ event, sessionId, store: storeWithView(sessionId, view), stateDir });
+
+    assertNothingShown(result);
+    const sessionDir = join(stateDir, sessionId);
+    assert.ok(!existsSync(sessionDir) || readdirSync(sessionDir).length === 0, 'no marker written');
+  });
+}

@@ -10,7 +10,11 @@ const INSTRUCTION =
 // Ids become path segments, so only plain ids are accepted.
 const PLAIN_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
+// The only events whose additionalContext reaches the agent; others must not claim a notice.
+const ANSWERED_EVENTS = ['UserPromptSubmit', 'PostToolUse'];
+
 const input = JSON.parse(readFileSync(0, 'utf8'));
+if (!ANSWERED_EVENTS.includes(input.hook_event_name)) process.exit(0);
 if (!PLAIN_ID.test(input.session_id)) process.exit(0);
 
 const store = JSON.parse(readFileSync(process.env.HEADS_UP_STORE, 'utf8'));
