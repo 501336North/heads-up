@@ -2,8 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runHook, tempDir } from './helpers.mjs';
 
 // Quiet is the design: success exit, nothing on stdout, nothing on stderr.
@@ -90,6 +91,11 @@ const changedShapes = [
   ['tag is not a string', { sessions: [{ id: 'abc', tag: 1 }], seen: [] }],
 ];
 
+// The version the warning must name, read from the plugin manifest so a version bump needs no test change.
+const pluginVersion = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '.claude-plugin', 'plugin.json'), 'utf8'),
+).version;
+
 function assertShapeWarning(result, event = 'PostToolUse') {
   assert.equal(result.code, 0);
   assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
@@ -97,7 +103,7 @@ function assertShapeWarning(result, event = 'PostToolUse') {
   const context = result.json.hookSpecificOutput.additionalContext;
   assert.ok(context.includes('store format changed'), 'says the store format changed');
   assert.ok(context.includes('heads-ups are off'), 'says heads-ups are off for now');
-  assert.ok(context.includes('version unknown'), 'names the plugin version (none installed yet)');
+  assert.ok(context.includes(`version ${pluginVersion}`), `names the plugin version (${pluginVersion})`);
 }
 
 for (const [label, store] of changedShapes) {
