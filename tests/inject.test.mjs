@@ -98,3 +98,41 @@ for (const event of ['Stop', 'PreToolUse']) {
     assert.ok(!existsSync(sessionDir) || readdirSync(sessionDir).length === 0, 'no marker written');
   });
 }
+
+test('should name the tag in the context when the entry is tagged "You should know"', async () => {
+  // User behaviour: the agent sees what kind of notice it is, as Claude Code labelled it.
+  // Business rule: the context starts from the entry's own tag (DESIGN A3).
+  const sessionId = randomUUID();
+
+  const result = await runHook({ sessionId, store: storeWithView(sessionId, view, { tag: 'You should know' }) });
+
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(result.json.hookSpecificOutput.additionalContext.includes('You should know'));
+});
+
+test('should say "Heads up" when the tag is missing', async () => {
+  // User behaviour: an untagged notice is still clearly presented to the agent as a heads-up.
+  // Business rule: "Heads up" is the default label when the entry has no tag.
+  const sessionId = randomUUID();
+  const store = { sessions: [{ id: sessionId, view }], seen: [] };
+
+  const result = await runHook({ sessionId, store });
+
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(result.json.hookSpecificOutput.additionalContext.includes('Heads up'));
+});
+
+test('should not print "undefined" when the view has no explanation', async () => {
+  // User behaviour: a notice with only a line reads cleanly to the agent, with no junk text.
+  // Business rule: the explanation is optional and simply left out when absent.
+  const sessionId = randomUUID();
+  const lineOnly = { line: 'Disk is almost full' };
+
+  const result = await runHook({ sessionId, store: storeWithView(sessionId, lineOnly) });
+
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  const context = result.json.hookSpecificOutput.additionalContext;
+  assert.ok(context.includes(lineOnly.line), 'mentions the line');
+  assert.ok(context.includes('Check whether it is true'), 'includes the instruction');
+  assert.ok(!context.includes('undefined'), 'no "undefined" text');
+});

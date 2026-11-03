@@ -7,6 +7,9 @@ const INSTRUCTION =
   'Check whether it is true. If it needs action, act while keeping your normal approval rules, ' +
   'then tell the user what you found and did, and say what they still need to do.';
 
+// Label used when Claude Code's entry carries no tag (DESIGN A3).
+const DEFAULT_TAG = 'Heads up';
+
 // Ids become path segments, so only plain ids are accepted.
 const PLAIN_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -36,7 +39,10 @@ if (entry) {
     if (err.code === 'EEXIST') process.exit(0);
     throw err;
   }
-  const additionalContext = `${view.line}\n${view.explanation}\n${INSTRUCTION}`;
+  // Label first, then the optional explanation, then the check-act-report instruction.
+  const additionalContext = [`${entry.tag ?? DEFAULT_TAG}: ${view.line}`, view.explanation, INSTRUCTION]
+    .filter(Boolean)
+    .join('\n');
   process.stdout.write(
     JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext } }),
   );
