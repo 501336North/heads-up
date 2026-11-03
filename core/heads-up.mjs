@@ -1,4 +1,5 @@
-import { readFileSync, mkdirSync, openSync } from 'node:fs';
+import { readFileSync, mkdirSync, openSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,12 +46,30 @@ function pluginVersion() {
   }
 }
 
+// Claude Code's notice store: ~/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json (AC-003.3).
+const STORE_PREFIX = 'cc-plugin-you-should-know_builtin-';
+
+/** HEADS_UP_STORE when set and non-empty; else the newest matching store file; undefined when none match. */
+function storePath() {
+  if (process.env.HEADS_UP_STORE) return process.env.HEADS_UP_STORE;
+  const dir = join(homedir(), '.claude', 'plugins', 'store');
+  return readdirSync(dir)
+    .filter((name) => name.startsWith(STORE_PREFIX) && name.endsWith('.json'))
+    .map((name) => ({ path: join(dir, name), mtimeMs: statSync(join(dir, name)).mtimeMs }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.path;
+}
+
+/** HEADS_UP_STATE_DIR when set and non-empty; else ~/.claude/heads-up. Always absolute, never cwd-relative. */
+function stateDir() {
+  return process.env.HEADS_UP_STATE_DIR || join(homedir(), '.claude', 'heads-up');
+}
+
 /**
  * Claim a one-time marker under <state>/<key>/ (key is an already-validated id).
  * 'wx' throws EEXIST when it was claimed before; the top-level catch turns that into a silent exit.
  */
 function claim(key, name) {
-  const dir = join(process.env.HEADS_UP_STATE_DIR, key);
+  const dir = join(stateDir(), key);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   openSync(join(dir, name), 'wx', 0o600);
 }
@@ -60,7 +79,9 @@ function contextFor(input) {
   if (!ANSWERED_EVENTS.includes(input.hook_event_name)) return undefined;
   if (!PLAIN_ID.test(input.session_id)) return undefined;
 
-  const store = JSON.parse(readFileSync(process.env.HEADS_UP_STORE, 'utf8'));
+  const path = storePath();
+  if (!path) return undefined;
+  const store = JSON.parse(readFileSync(path, 'utf8'));
   if (!isExpectedShape(store)) {
     // Warn once per session that Claude Code changed the store and heads-ups are off (AC-003.2).
     claim(input.session_id, '.shape-warned');
