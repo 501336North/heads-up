@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -22,7 +22,9 @@ for (const value of ['off', 'OFF', ' Off ']) {
     const sessionId = randomUUID();
     const stateDir = join(tempDir(), 'state');
 
-    const result = await runHook({ sessionId, store: storeWithView(sessionId, view), stateDir, env: { HEADS_UP: value } });
+    const store = storeWithView(sessionId, view);
+
+    const result = await runHook({ sessionId, store, stateDir, env: { HEADS_UP: value } });
 
     assertOffEffect(result, stateDir);
   });
@@ -47,8 +49,7 @@ for (const value of ['on', '', '0', 'false', 'offline', 'OFF?']) {
 
     const result = await runHook({ sessionId, store: storeWithView(sessionId, view), env: { HEADS_UP: value } });
 
-    assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-    assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+    assert.ok(injectedContext(result).includes(view.line));
   });
 }
 
@@ -142,7 +143,6 @@ test('should still inject when pruning fails', async (t) => {
 
   const result = await runUnrelated(stateDir);
 
-  assert.equal(result.code, 0);
   assert.equal(result.stderr, '');
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(injectedContext(result).includes(view.line));
 });

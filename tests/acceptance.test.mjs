@@ -3,17 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = {
   line: 'The build cache "dist/" is stale',
   explanation: 'Files in dist/ are older than src/.\nRebuild before testing.',
 };
-
-function assertNothingShown(result) {
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, '');
-}
 
 // US-001: Agent receives its own heads-ups
 
@@ -26,10 +21,8 @@ for (const event of ['PostToolUse', 'UserPromptSubmit']) {
     const result = await runHook({ event, sessionId, store: storeWithView(sessionId, view) });
 
     // Then the agent is given the heads-up and told to check it and tell the user
-    assert.equal(result.code, 0);
-    assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+    const context = injectedContext(result);
     assert.equal(result.json.hookSpecificOutput.hookEventName, event);
-    const context = result.json.hookSpecificOutput.additionalContext;
     assert.ok(context.includes(view.line), 'mentions the heads-up line');
     assert.ok(context.includes(view.explanation), 'mentions the explanation');
     assert.ok(context.includes('Check whether it is true'), 'asks the agent to check it');
@@ -58,7 +51,10 @@ test("another session's heads-up is never shown in this session", async () => {
   // Given only another session's entry has a heads-up
   const thisSession = randomUUID();
   const otherSession = randomUUID();
-  const store = { sessions: [{ id: thisSession, tag: 'Heads up' }, { id: otherSession, tag: 'Heads up', view }], seen: [] };
+  const store = {
+    sessions: [{ id: thisSession, tag: 'Heads up' }, { id: otherSession, tag: 'Heads up', view }],
+    seen: [],
+  };
 
   // When the hook runs in this session
   const result = await runHook({ sessionId: thisSession, store });
@@ -81,9 +77,7 @@ test('a resumed session still gets the heads-up stored under its original id', a
   });
 
   // Then the agent is given the heads-up
-  assert.equal(result.code, 0);
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(injectedContext(result).includes(view.line));
 });
 
 // US-003: Never breaks a session

@@ -1,4 +1,14 @@
-import { realpathSync, readFileSync, mkdirSync, openSync, readdirSync, statSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
+import {
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, basename, dirname } from 'node:path';
@@ -130,7 +140,7 @@ function contextFor(input) {
 
   // A resumed session keeps its original id in the transcript file name (DESIGN A1).
   // A missing or non-string transcript_path simply adds no candidate.
-  const transcriptIds = typeof input.transcript_path === 'string' ? [basename(input.transcript_path, '.jsonl')] : [];
+  const transcriptIds = isString(input.transcript_path) ? [basename(input.transcript_path, '.jsonl')] : [];
   const ids = [input.session_id, ...transcriptIds].filter((id) => PLAIN_ID.test(id));
   const entry = store.sessions.find((s) => ids.includes(s.id) && s.view);
   if (!entry) return undefined;

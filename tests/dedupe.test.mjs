@@ -4,14 +4,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
-
-function assertNothingShown(result) {
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, '');
-}
 
 test('should print nothing when the same notice was already injected in this session', async () => {
   // User behaviour: the agent is not nagged with the same heads-up on every tool call.
@@ -37,8 +32,7 @@ test('should inject again when a different notice replaces the view', async () =
   await runHook({ sessionId, store: storeWithView(sessionId, view), stateDir });
   const second = await runHook({ sessionId, store: storeWithView(sessionId, newer), stateDir });
 
-  assert.ok(second.json, 'the new notice is injected');
-  assert.ok(second.json.hookSpecificOutput.additionalContext.includes(newer.line));
+  assert.ok(injectedContext(second).includes(newer.line), 'the new notice is injected');
 });
 
 test('should create the state dir 0700 and markers 0600', async () => {

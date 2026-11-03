@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, utimesSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -36,8 +36,7 @@ test('should read the only cc-plugin-you-should-know_builtin-*.json in ~/.claude
 
   const result = await runWithHome(home, sessionId);
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(injectedContext(result).includes(view.line));
 });
 
 test('should read the newest by mtime when several match', async () => {
@@ -54,8 +53,7 @@ test('should read the newest by mtime when several match', async () => {
 
   const result = await runWithHome(home, sessionId);
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  const context = result.json.hookSpecificOutput.additionalContext;
+  const context = injectedContext(result);
   assert.ok(context.includes(view.line), 'uses the newest store');
   assert.ok(!context.includes(stale.line), 'ignores older stores');
 });
@@ -71,8 +69,7 @@ test('should print nothing when none match', async () => {
 
   const result = await runWithHome(home, sessionId);
 
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, '');
+  assertNothingShown(result);
 });
 
 test('should keep handled state under ~/.claude/heads-up when HEADS_UP_STATE_DIR is unset', async () => {
@@ -85,7 +82,7 @@ test('should keep handled state under ~/.claude/heads-up when HEADS_UP_STATE_DIR
 
   const result = await runHook({ sessionId, env: { HOME: home, HEADS_UP_STORE: '', HEADS_UP_STATE_DIR: '' } });
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(injectedContext(result).includes(view.line));
   const sessionDir = join(home, '.claude', 'heads-up', sessionId);
   assert.ok(existsSync(sessionDir), 'session dir created under ~/.claude/heads-up');
   assert.equal(readdirSync(sessionDir).length, 1, 'one marker written');

@@ -4,14 +4,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
-
-function assertNothingShown(result) {
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, '');
-}
 
 test('should inject a view stored under the transcript id when the hook session_id is the continued id', async () => {
   // User behaviour: after resuming a session, the agent still gets the heads-up shown for that conversation.
@@ -25,9 +20,7 @@ test('should inject a view stored under the transcript id when the hook session_
     store: storeWithView(originalId, view),
   });
 
-  assert.equal(result.code, 0);
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(injectedContext(result).includes(view.line));
 });
 
 test('should mark it handled so the next run under either id prints nothing', async () => {
@@ -75,7 +68,5 @@ test('should still inject by session_id when transcript_path is missing', async 
 
   const result = await runHook({ stdin, store: storeWithView(sessionId, view) });
 
-  assert.equal(result.code, 0);
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(injectedContext(result).includes(view.line));
 });

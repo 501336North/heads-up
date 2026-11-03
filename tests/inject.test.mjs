@@ -4,18 +4,13 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { runHook, storeWithView, tempDir } from './helpers.mjs';
+import { assertNothingShown, injectedContext, runHook, storeWithView, tempDir } from './helpers.mjs';
 
 // Text with quotes, newlines and a control character, so the JSON round-trip is exercised.
 const view = {
   line: 'Port "3000" is already \'in use\'',
   explanation: 'Another dev server is running.\nStop it first.\u0007 Then retry.',
 };
-
-function assertNothingShown(result) {
-  assert.equal(result.code, 0);
-  assert.equal(result.stdout, '');
-}
 
 test("should inject the line, explanation and check-act-report instruction when this session's entry has a view", async () => {
   // User behaviour: the agent in this session learns about its heads-up, verifies it, acts, and reports to the user.
@@ -24,10 +19,8 @@ test("should inject the line, explanation and check-act-report instruction when 
 
   const result = await runHook({ event: 'PostToolUse', sessionId, store: storeWithView(sessionId, view) });
 
-  assert.equal(result.code, 0);
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  const context = injectedContext(result);
   assert.equal(result.json.hookSpecificOutput.hookEventName, 'PostToolUse');
-  const context = result.json.hookSpecificOutput.additionalContext;
   assert.ok(context.includes(view.line), 'mentions the line exactly');
   assert.ok(context.includes(view.explanation), 'mentions the explanation exactly');
   assert.ok(context.includes('Check whether it is true'), 'asks the agent to verify the claim');
@@ -78,10 +71,9 @@ test('should answer UserPromptSubmit with hookEventName UserPromptSubmit', async
 
   const result = await runHook({ event: 'UserPromptSubmit', sessionId, store: storeWithView(sessionId, view) });
 
-  assert.equal(result.code, 0);
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  const context = injectedContext(result);
   assert.equal(result.json.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(context.includes(view.line));
 });
 
 for (const event of ['Stop', 'PreToolUse']) {
@@ -106,8 +98,7 @@ test('should name the tag in the context when the entry is tagged "You should kn
 
   const result = await runHook({ sessionId, store: storeWithView(sessionId, view, { tag: 'You should know' }) });
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes('You should know'));
+  assert.ok(injectedContext(result).includes('You should know'));
 });
 
 test('should say "Heads up" when the tag is missing', async () => {
@@ -118,8 +109,7 @@ test('should say "Heads up" when the tag is missing', async () => {
 
   const result = await runHook({ sessionId, store });
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes('Heads up'));
+  assert.ok(injectedContext(result).includes('Heads up'));
 });
 
 test('should not print "undefined" when the view has no explanation', async () => {
@@ -130,8 +120,7 @@ test('should not print "undefined" when the view has no explanation', async () =
 
   const result = await runHook({ sessionId, store: storeWithView(sessionId, lineOnly) });
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  const context = result.json.hookSpecificOutput.additionalContext;
+  const context = injectedContext(result);
   assert.ok(context.includes(lineOnly.line), 'mentions the line');
   assert.ok(context.includes('Check whether it is true'), 'includes the instruction');
   assert.ok(!context.includes('undefined'), 'no "undefined" text');

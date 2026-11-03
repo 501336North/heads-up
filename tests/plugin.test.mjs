@@ -5,10 +5,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, symlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { hookScript, runHook, storeWithView, tempDir, writeStore } from './helpers.mjs';
+import { hookScript, injectedContext, repoRoot, runHook, storeWithView, tempDir, writeStore } from './helpers.mjs';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readJson = (rel) => JSON.parse(readFileSync(join(repoRoot, rel), 'utf8'));
 
 const EXPECTED_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/core/heads-up.mjs"';
@@ -89,6 +87,5 @@ test('should still run the hook when the script is reached through a symlink', a
 
   const result = await runHook({ sessionId, store: storeWithView(sessionId, view), script: link });
 
-  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
-  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
+  assert.ok(injectedContext(result).includes(view.line));
 });

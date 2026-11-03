@@ -1,12 +1,14 @@
 // Test helpers: run the real hook script as a separate process, the way Claude Code does.
 // Every run gets fresh temp dirs under os.tmpdir(); the real ~/.claude is never touched.
+import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** The repository root (the plugin dir). */
+export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The real hook script; runHook's `script` option can point at another copy. */
 export const hookScript = join(repoRoot, 'core', 'heads-up.mjs');
 
@@ -25,6 +27,19 @@ export function writeStore(dir, obj) {
 /** A store with one session entry carrying a view. */
 export function storeWithView(id, view, { tag = 'Heads up', seen = [] } = {}) {
   return { sessions: [{ id, tag, view }], seen };
+}
+
+/** Assert the run exited 0 and printed nothing. */
+export function assertNothingShown(result) {
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, '');
+}
+
+/** Assert the run exited 0 with hook JSON on stdout, and return the context it gives the agent. */
+export function injectedContext(result) {
+  assert.equal(result.code, 0);
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  return result.json.hookSpecificOutput.additionalContext;
 }
 
 /**

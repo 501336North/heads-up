@@ -48,7 +48,9 @@ function run(args, { env = process.env, stdin = '' } = {}) {
 test('importing the core module does not run the hook', async () => {
   // Business rule: the shape check can be imported by tools (this contract check) without the module
   // reading stdin or printing anything. stdin is left open: if main ran on import, it would block and be killed.
-  const code = `const m = await import(${JSON.stringify(pathToFileURL(hookScript).href)}); process.stdout.write(typeof m.isExpectedShape);`;
+  const code =
+    `const m = await import(${JSON.stringify(pathToFileURL(hookScript).href)});` +
+    `process.stdout.write(typeof m.isExpectedShape);`;
 
   const result = await run(['--input-type=module', '-e', code], { stdin: null });
 
