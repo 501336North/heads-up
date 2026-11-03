@@ -1,0 +1,6 @@
+{
+  "name": "heads-up",
+  "version": "1.0.0",
+  "description": "Tells the agent about Claude Code heads-ups for its own session, once, so it can check them and tell you.",
+  "author": { "name": "Yanick Lavoie" }
+}
