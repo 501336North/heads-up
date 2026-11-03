@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, symlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { storeWithView, tempDir, writeStore } from './helpers.mjs';
+import { hookScript, runHook, storeWithView, tempDir, writeStore } from './helpers.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const readJson = (rel) => JSON.parse(readFileSync(join(repoRoot, rel), 'utf8'));
@@ -77,4 +77,18 @@ test('should inject when the registered command is run the way Claude Code runs 
   const json = JSON.parse(stdout);
   assert.equal(json.hookSpecificOutput.hookEventName, 'PostToolUse');
   assert.ok(json.hookSpecificOutput.additionalContext.includes(view.line));
+});
+
+test('should still run the hook when the script is reached through a symlink', async () => {
+  // User behaviour: a plugin dir that is symlinked into place (common for local installs) still works.
+  // Business rule: the "run only as the main script" guard resolves symlinks before comparing paths.
+  const link = join(tempDir(), 'linked-heads-up.mjs');
+  symlinkSync(hookScript, link);
+  const sessionId = randomUUID();
+  const view = { line: 'Port 3000 is in use', explanation: 'Another server is running.' };
+
+  const result = await runHook({ sessionId, store: storeWithView(sessionId, view), script: link });
+
+  assert.ok(result.json, `expected hook JSON on stdout, got: ${JSON.stringify(result.stdout)}`);
+  assert.ok(result.json.hookSpecificOutput.additionalContext.includes(view.line));
 });

@@ -1,8 +1,8 @@
-import { readFileSync, mkdirSync, openSync, readdirSync, statSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
+import { realpathSync, readFileSync, mkdirSync, openSync, readdirSync, statSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join, basename, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Frames the notice as a claim to verify, keeps normal approval rules, and asks for a report to the user.
 const INSTRUCTION =
@@ -22,7 +22,7 @@ const isString = (v) => typeof v === 'string';
 const isOptionalString = (v) => v === undefined || isString(v);
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-function isExpectedShape(store) {
+export function isExpectedShape(store) {
   return (
     isObject(store) &&
     Array.isArray(store.sessions) &&
@@ -142,17 +142,23 @@ function contextFor(input) {
   return [`${entry.tag ?? DEFAULT_TAG}: ${view.line}`, view.explanation, INSTRUCTION].filter(Boolean).join('\n');
 }
 
-try {
-  // Off switch (AC-005.1), checked before reading stdin or any file. Exactly "off", any case; nothing else.
-  if (process.env.HEADS_UP?.trim().toLowerCase() === 'off') process.exit(0);
-  const input = JSON.parse(readFileSync(0, 'utf8'));
-  const additionalContext = contextFor(input);
-  if (additionalContext) {
-    process.stdout.write(
-      JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext } }),
-    );
+/** Run as a Claude Code hook: hook JSON on stdin, hook JSON (or nothing) on stdout, always exit 0. */
+function main() {
+  try {
+    // Off switch (AC-005.1), checked before reading stdin or any file. Exactly "off", any case; nothing else.
+    if (process.env.HEADS_UP?.trim().toLowerCase() === 'off') process.exit(0);
+    const input = JSON.parse(readFileSync(0, 'utf8'));
+    const additionalContext = contextFor(input);
+    if (additionalContext) {
+      process.stdout.write(
+        JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext } }),
+      );
+    }
+  } catch {
+    // Never break a session: any failure means "no notice", exit 0, nothing on stdout or stderr.
+    process.exitCode = 0;
   }
-} catch {
-  // Never break a session: any failure means "no notice", exit 0, nothing on stdout or stderr.
-  process.exitCode = 0;
 }
+
+// Run only when executed as a script (symlinks resolved), so tools can import isExpectedShape safely.
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) main();

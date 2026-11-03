@@ -48,6 +48,9 @@ npm test
 
 Tests use `node:test`. They run the real script as a separate process, against temp dirs only.
 
+Before shipping, run `npm run contract` locally: it checks the real Claude Code store (read-only) against the
+expected shape and checks the hook's speed on it.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
