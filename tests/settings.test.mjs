@@ -1,10 +1,10 @@
-// Settings and housekeeping: the HEADS_UP=off switch, and pruning of old handled state.
+// Settings and housekeeping: the HEADS_UP=off and HEADS_UP_CLEAR=off switches, and pruning of old handled state.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, symlinkSync, utimesSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
-import { aged, injectedContext, markStateDir, runHook, storeWithView, tempDir } from './helpers.mjs';
+import { aged, injectedContext, markStateDir, runHook, storeWithView, tempDir, writeBuiltinStore } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -50,6 +50,48 @@ for (const value of ['on', '', '0', 'false', 'offline', 'OFF?']) {
     const result = await runHook({ sessionId, store: storeWithView(sessionId, view), env: { HEADS_UP: value } });
 
     assert.ok(injectedContext(result).includes(view.line));
+  });
+}
+
+// --- Clearing switch (v1.1, DESIGN §Behaviour 7) ---
+
+/** A store file holding an unopened ("offer") notice for `sessionId`; returns its path. */
+function offerStore(sessionId) {
+  return writeBuiltinStore(tempDir(), storeWithView(sessionId, { ...view, kind: 'offer', shownAt: Date.now() }));
+}
+
+// User behaviour: a user who wants to dismiss heads-ups themselves can stop the hook clearing them; the agent still
+// gets each one and the user is still told.
+// Business rule: HEADS_UP_CLEAR=off (any case, surrounding spaces ignored) skips only the clear; the store is
+// untouched.
+for (const value of ['off', 'OFF', ' Off ']) {
+  test(`should relay but not clear when HEADS_UP_CLEAR=${JSON.stringify(value)}`, async () => {
+    const sessionId = randomUUID();
+    const storePath = offerStore(sessionId);
+    const before = readFileSync(storePath);
+
+    const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: value } });
+
+    assert.ok(injectedContext(result).includes(view.line), 'the notice still reaches the agent');
+    assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + view.line, 'the user is told');
+    assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
+    assert.equal(existsSync(storePath + '.lock'), false, 'no lock is left');
+  });
+}
+
+// User behaviour: any value other than "off" (including typos and empty) keeps clearing on, so a mistyped
+// setting never leaves relayed heads-ups stuck on screen.
+// Business rule: only "off" is a switch; clearing is on by default.
+for (const value of ['on', '0', '']) {
+  test(`should clear for any other HEADS_UP_CLEAR value (${JSON.stringify(value)})`, async () => {
+    const sessionId = randomUUID();
+    const storePath = offerStore(sessionId);
+
+    const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: value } });
+
+    injectedContext(result);
+    const entry = JSON.parse(readFileSync(storePath, 'utf8')).sessions.find((e) => e.id === sessionId);
+    assert.equal('view' in entry, false, 'the relayed notice is cleared');
   });
 }
 

@@ -24,6 +24,7 @@ import {
   STATE_SENTINEL,
   storeWithView,
   tempDir,
+  writeStore,
 } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
@@ -220,6 +221,24 @@ test('should adopt an existing non-empty unmarked default state root and mark it
   assert.ok(lstatSync(join(root, STATE_SENTINEL)).isFile(), 'the default root is marked');
 });
 
+// User behaviour: a HEADS_UP_STATE_DIR left as just spaces (e.g. an empty value in a settings file) behaves as
+// if it were not set, so each heads-up is still relayed only once.
+// Business rule: HEADS_UP_STATE_DIR is trimmed; blank means the default root ~/.claude/heads-up.
+test('should use the default state root when HEADS_UP_STATE_DIR is only spaces', async () => {
+  const home = tempDir('heads-up-home-');
+  const sessionId = randomUUID();
+  const storePath = writeStore(tempDir(), storeWithView(sessionId, view));
+  const run = () => runHook({ sessionId, storePath, stateDir: '   ', env: { HOME: home } });
+
+  const first = await run();
+  const second = await run();
+
+  assert.ok(injectedContext(first).includes(view.line), 'the first run relays the notice');
+  assertNothingShown(second);
+  const sessionDir = join(home, '.claude', 'heads-up', sessionId);
+  assert.ok(existsSync(sessionDir) && readdirSync(sessionDir).length === 1, 'the marker is under the default root');
+});
+
 // User behaviour: another local user cannot get this user's runs to keep state in, or delete from, a folder
 // that other user owns.
 // Business rule: the state root must be owned by the user running the hook; otherwise the run does nothing
@@ -240,4 +259,23 @@ test("should do nothing stateful when the state root is owned by another user", 
   const stat = statSync(victim.dir);
   assert.equal(stat.uid, 1, 'owner unchanged');
   assert.equal(stat.mode & 0o777, 0o755, 'mode unchanged');
+});
+
+// User behaviour: a HEADS_UP_STATE_DIR with stray spaces around it (e.g. pasted into a settings file) still keeps
+// state in the folder the user meant, so each heads-up is relayed only once.
+// Business rule: HEADS_UP_STATE_DIR is trimmed before use; markers and the log land in the trimmed dir.
+test('should keep state in HEADS_UP_STATE_DIR with surrounding spaces trimmed', async () => {
+  const realDir = tempDir();
+  const sessionId = randomUUID();
+  const storePath = writeStore(tempDir(), storeWithView(sessionId, view));
+  const run = () => runHook({ sessionId, storePath, stateDir: '  ' + realDir + '  ' });
+
+  const first = await run();
+  const second = await run();
+
+  assert.ok(injectedContext(first).includes(view.line), 'the first run relays the notice');
+  assertNothingShown(second);
+  const sessionDir = join(realDir, sessionId);
+  assert.ok(existsSync(sessionDir) && readdirSync(sessionDir).length === 1, 'the marker is in the trimmed dir');
+  assert.ok(lstatSync(join(realDir, 'heads-up.log')).isFile(), 'the log is in the trimmed dir');
 });

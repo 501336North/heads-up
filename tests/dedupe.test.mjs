@@ -44,7 +44,8 @@ test('should create the state dir 0700 and markers 0600', async () => {
   await runHook({ sessionId, store: storeWithView(sessionId, view), stateDir });
 
   assert.equal(statSync(stateDir).mode & 0o777, 0o700, 'state dir is 0700');
-  const sessionDirs = readdirSync(stateDir).filter((name) => name !== STATE_SENTINEL);
+  // v1.1: the state root also holds the saved log (heads-up.log), which is not a session dir.
+  const sessionDirs = readdirSync(stateDir).filter((name) => name !== STATE_SENTINEL && name !== 'heads-up.log');
   assert.equal(sessionDirs.length, 1, 'one session subdir');
   assert.equal(statSync(join(stateDir, STATE_SENTINEL)).mode & 0o777, 0o600, 'state mark is 0600');
   const sessionDir = join(stateDir, sessionDirs[0]);

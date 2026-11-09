@@ -12,9 +12,12 @@ export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The real hook script; runHook's `script` option can point at another copy. */
 export const hookScript = join(repoRoot, 'core', 'heads-up.mjs');
 
-/** The test process's env minus HEADS_UP, so a developer's exported HEADS_UP=off never changes what a test sees. */
+/**
+ * The test process's env minus HEADS_UP and HEADS_UP_CLEAR, so a developer's exported switch never changes what a
+ * test sees.
+ */
 export function inheritedEnv() {
-  const { HEADS_UP: _ignored, ...env } = process.env;
+  const { HEADS_UP: _ignored, HEADS_UP_CLEAR: _ignoredClear, ...env } = process.env;
   return env;
 }
 
@@ -50,6 +53,16 @@ export function markStateDir(dir) {
 export function writeStore(dir, obj) {
   const path = join(dir, 'store.json');
   writeFileSync(path, JSON.stringify(obj));
+  return path;
+}
+
+/**
+ * Write a notice store file into `dir` exactly as the built-in writes it (2-space JSON, trailing newline, mode
+ * 0600) and return its path. Only a store in this canonical form is ever cleared.
+ */
+export function writeBuiltinStore(dir, obj) {
+  const path = join(dir, 'store.json');
+  writeFileSync(path, JSON.stringify(obj, null, 2) + '\n', { mode: 0o600 });
   return path;
 }
 
@@ -136,4 +149,34 @@ export function runHook({
       resolve({ code, stdout, stderr, json });
     });
   });
+}
+
+/**
+ * Run the hook with its stdout pipe already closed by the reader, so its write fails with EPIPE.
+ * Deterministic: the parent closes its read end and waits for that close before sending stdin, and the hook
+ * does not write before it has read all of stdin. (A closed fd 1 would not do: Node reopens it on /dev/null.)
+ */
+export async function runWithClosedStdout({ sessionId, storePath, stateDir }) {
+  const child = spawn(process.execPath, [hookScript], {
+    cwd: repoRoot,
+    env: {
+      ...inheritedEnv(),
+      HOME: tempDir('heads-up-home-'),
+      HEADS_UP_STORE: storePath,
+      HEADS_UP_STATE_DIR: stateDir,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (d) => (stderr += d));
+  child.stdin.on('error', () => {});
+  await new Promise((resolve) => {
+    child.stdout.on('close', resolve);
+    child.stdout.destroy();
+  });
+  child.stdin.end(
+    JSON.stringify({ session_id: sessionId, transcript_path: `/x/${sessionId}.jsonl`, hook_event_name: 'PostToolUse' }),
+  );
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  return { code, stderr };
 }
