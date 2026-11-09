@@ -1,18 +1,17 @@
 // Fail-safe: whatever goes wrong, the hook never breaks or clutters the user's session.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   aged,
   hookScript,
-  inheritedEnv,
   injectedContext,
   markStateDir,
   repoRoot,
   runHook,
+  runWithClosedStdout,
   storeWithView,
   tempDir,
   writeStore,
@@ -200,36 +199,6 @@ test('should inject the line when explanation is null', async () => {
 });
 
 // --- Output that cannot be delivered (C3) ---
-
-/**
- * Run the hook with its stdout pipe already closed by the reader, so its write fails with EPIPE.
- * Deterministic: the parent closes its read end and waits for that close before sending stdin, and the hook
- * does not write before it has read all of stdin. (A closed fd 1 would not do: Node reopens it on /dev/null.)
- */
-async function runWithClosedStdout({ sessionId, storePath, stateDir }) {
-  const child = spawn(process.execPath, [hookScript], {
-    cwd: repoRoot,
-    env: {
-      ...inheritedEnv(),
-      HOME: tempDir('heads-up-home-'),
-      HEADS_UP_STORE: storePath,
-      HEADS_UP_STATE_DIR: stateDir,
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let stderr = '';
-  child.stderr.on('data', (d) => (stderr += d));
-  child.stdin.on('error', () => {});
-  await new Promise((resolve) => {
-    child.stdout.on('close', resolve);
-    child.stdout.destroy();
-  });
-  child.stdin.end(
-    JSON.stringify({ session_id: sessionId, transcript_path: `/x/${sessionId}.jsonl`, hook_event_name: 'PostToolUse' }),
-  );
-  const code = await new Promise((resolve) => child.on('close', resolve));
-  return { code, stderr };
-}
 
 test('should keep a notice for a later run when its output could not be written', async () => {
   // User behaviour: a heads-up is not lost because Claude Code stopped reading the hook's output once.

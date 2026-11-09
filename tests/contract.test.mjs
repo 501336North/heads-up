@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -80,9 +80,68 @@ test('should pass the shape check on the real store when one exists', async (t) 
   assert.equal(result.stdout, 'true', `shape of ${storePath}`);
 });
 
-test('should finish a run in under 100 ms (median of 10) on the real store', async (t) => {
+/** Every real store file under the real home (possibly none). Read-only. */
+function realStorePaths() {
+  const dir = join(homedir(), '.claude', 'plugins', 'store');
+  try {
+    return readdirSync(dir)
+      .filter((name) => name.startsWith(STORE_PREFIX) && name.endsWith('.json'))
+      .map((name) => join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+test('should find every real store in the exact layout the hook can clear', (t) => {
+  // User behaviour: before shipping, the developer learns whether Claude Code still writes its notice file in the
+  // layout the hook can rewrite, instead of users finding relayed heads-ups no longer cleared.
+  // Business rule: each real store's bytes equal its parsed value as 2-space JSON plus a trailing newline. Only
+  // read; the real files are never written.
+  const paths = realStorePaths();
+  if (paths.length === 0) {
+    t.skip('no real notice store on this machine');
+    return;
+  }
+  for (const path of paths) {
+    const bytes = readFileSync(path);
+    const canonical = Buffer.from(JSON.stringify(JSON.parse(bytes.toString('utf8')), null, 2) + '\n');
+    assert.ok(
+      canonical.equals(bytes),
+      `${path} is not in the 2-space JSON layout the hook rewrites, so clearing would stop ` +
+        '(users would see "not cleared: Claude Code\'s notice file changed")',
+    );
+  }
+});
+
+// The view kinds the built-in writes (Claude Code 2.1.319: offer when shown, explaining / explained when opened,
+// off when turned off). The clear recognises an unopened notice only by kind "offer".
+const KNOWN_VIEW_KINDS = ['offer', 'explaining', 'explained', 'off'];
+
+test('should find only known view kinds in every real store', (t) => {
+  // User behaviour: before shipping, the developer learns whether Claude Code changed how it marks a notice, which
+  // could make the hook stop recognising unopened notices (and so stop clearing them).
+  // Business rule: every session view in each real store has one of the known kinds. Only read; never written.
+  const paths = realStorePaths();
+  if (paths.length === 0) {
+    t.skip('no real notice store on this machine');
+    return;
+  }
+  for (const path of paths) {
+    const { sessions } = JSON.parse(readFileSync(path, 'utf8'));
+    for (const kind of sessions.filter((e) => e.view).map((e) => e.view.kind)) {
+      assert.ok(
+        KNOWN_VIEW_KINDS.includes(kind),
+        `${path} has view kind ${JSON.stringify(kind)}, not one of ${KNOWN_VIEW_KINDS.join(', ')}: an unknown kind ` +
+          'could mean unopened notices are no longer recognised, so they would not be cleared',
+      );
+    }
+  }
+});
+
+test('should finish a run in under 200 ms (median of 10) on the real store', async (t) => {
   // User behaviour: the hook runs after every tool call, so it must not slow the session down noticeably.
-  // Business rule: a run against the real store takes under 100 ms (median of 10; generous to avoid flakiness).
+  // Business rule: a run against the real store takes under 200 ms (median of 10). Idle runs take about 60 ms;
+  // the limit is generous so a busy machine does not fail it.
   // Timing is only meaningful without other test files spawning processes in parallel, so it runs only under
   // `npm run contract` (one file, --test-concurrency=1).
   if (process.env.HEADS_UP_CONTRACT !== '1') {
@@ -118,5 +177,5 @@ test('should finish a run in under 100 ms (median of 10) on the real store', asy
   const median = (times[4] + times[5]) / 2;
   t.diagnostic(`median ${median.toFixed(1)} ms; runs ${times.map((ms) => ms.toFixed(0)).join(', ')} ms`);
 
-  assert.ok(median < 100, `median ${median.toFixed(1)} ms is under 100 ms`);
+  assert.ok(median < 200, `median ${median.toFixed(1)} ms is under 200 ms`);
 });
