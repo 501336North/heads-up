@@ -73,11 +73,16 @@ state folder to resume clearing.
 
 ## Install
 
-In Claude Code:
+heads-up relays the notices of Claude Code's built-in **You should know** plugin, which is off by default. In
+Claude Code, turn it on, then install heads-up:
 
 ```
+/plugin enable cc-plugin-you-should-know@builtin
 /plugin install heads-up --marketplace 501336North/heads-up
 ```
+
+Claude Code does not offer You should know to every account: it is not available to HIPAA or zero-data-retention
+organizations, among others. If it cannot be turned on for you, heads-up has nothing to relay.
 
 On Claude Code older than 2.1.275, add the marketplace first, then install:
 
@@ -88,8 +93,8 @@ On Claude Code older than 2.1.275, add the marketplace first, then install:
 
 Requires Node.js 20 or newer on your `PATH`.
 
-heads-up relays Claude Code's own built-in heads-ups, so it does nothing until those are turned on. Until then the
-hook exits without starting Node (a few milliseconds per prompt and tool call).
+Until You should know is on, heads-up does nothing: the hook exits without starting Node (a few milliseconds per
+prompt and tool call).
 
 The OSS Dev Workflow plugin ships a pinned copy of this hook. Running both is fine: they share the same state, so
 each heads-up still reaches the agent once.
