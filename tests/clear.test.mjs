@@ -27,6 +27,7 @@ import {
   runWithClosedStdout,
   tempDir,
   writeBuiltinStore,
+  plain,
 } from './helpers.mjs';
 
 /** An unopened ("offer") notice with a line unique to this test. */
@@ -115,7 +116,7 @@ test('should tell the user the notice was relayed', async () => {
   const result = await runHook({ sessionId, storePath });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, relayed(line));
+  assert.equal(plain(result.json.systemMessage), relayed(line));
 });
 
 test('should clear the entry it delivered for a resumed session', async () => {
@@ -144,7 +145,7 @@ test('should not clear a notice the user has opened', async () => {
     const result = await runHook({ sessionId, storePath });
 
     assert.ok(injectedContext(result).includes(line), `the ${kind} notice still reaches the agent`);
-    assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
+    assert.equal(plain(result.json.systemMessage), relayed(line), 'the user is told');
     assert.deepEqual(readFileSync(storePath), before, `the ${kind} notice is left in the store unchanged`);
   }
 });
@@ -183,7 +184,7 @@ test('should not touch the store while the built-in holds its lock', async () =>
   const elapsed = Date.now() - started;
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
+  assert.equal(plain(result.json.systemMessage), relayed(line), 'the user is told');
   assert.deepEqual(readFileSync(storePath), before, 'the store is left unchanged');
   assert.ok(existsSync(lock), "the built-in's lock is never removed");
   assert.ok(elapsed < 3000, `the run gives up within 3 s (took ${elapsed} ms)`);
@@ -360,7 +361,7 @@ test('should still relay when the store cannot be rewritten', async (t) => {
   const result = await runHook({ sessionId, storePath });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
+  assert.equal(plain(result.json.systemMessage), relayed(line), 'the user is told');
   assert.equal(result.stderr, '', 'nothing on stderr');
   assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
   assert.deepEqual(readdirSync(dir), listedBefore, 'no lock or temp file is left');
@@ -536,7 +537,7 @@ test("should tell the user when the notice file's layout prevents clearing", asy
   const result = await runHook({ sessionId, storePath });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, NOT_CLEARED + `“${line}”`);
+  assert.equal(plain(result.json.systemMessage), NOT_CLEARED + `“${line}”`);
   assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
 });
 
@@ -550,7 +551,7 @@ test('should give the normal relayed message for a store in the built-in layout'
   const result = await runHook({ sessionId, storePath });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, relayed(line));
+  assert.equal(plain(result.json.systemMessage), relayed(line));
 });
 
 test('should give the normal relayed message with HEADS_UP_CLEAR=off whatever the layout', async () => {
@@ -563,7 +564,7 @@ test('should give the normal relayed message with HEADS_UP_CLEAR=off whatever th
   const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: 'off' } });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, relayed(line));
+  assert.equal(plain(result.json.systemMessage), relayed(line));
 });
 
 /** The relayed message with a "not cleared" note giving `reason`. */
@@ -587,7 +588,7 @@ test('should tell the user when the notice file is a symlink, which is never cle
   const result = await runHook({ sessionId, storePath: link });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, notCleared("Claude Code's notice file is a symlink", line));
+  assert.equal(plain(result.json.systemMessage), notCleared("Claude Code's notice file is a symlink", line));
   assert.deepEqual(readFileSync(target), before, 'the file behind the link is unchanged');
 });
 
@@ -615,7 +616,7 @@ test('should tell the user when the saved log is full, which stops clearing', as
   const result = await runHook({ sessionId, storePath, stateDir });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, notCleared('the saved log is full (see README, Saved log)', line));
+  assert.equal(plain(result.json.systemMessage), notCleared('the saved log is full (see README, Saved log)', line));
   assert.deepEqual(readFileSync(storePath), before, 'the notice is not cleared');
   assert.equal(statSync(log).size, logSize, 'nothing is appended to the full log');
 });
@@ -634,7 +635,7 @@ test('should not call a large log full when it can still be rotated', async () =
   const result = await runHook({ sessionId, storePath, stateDir });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, relayed(line));
+  assert.equal(plain(result.json.systemMessage), relayed(line));
   assert.equal('view' in entryOf(readStoreFile(storePath), sessionId), false, 'the notice is cleared');
   assert.equal(readFileSync(join(stateDir, 'heads-up.log.1'), 'utf8'), old, 'the old log is rotated');
   assert.ok(readFileSync(join(stateDir, 'heads-up.log'), 'utf8').includes(line), 'the new entry is saved');
@@ -665,7 +666,7 @@ for (const [kind, plant] of [
 
     assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
     const reason = 'the saved log is not a plain file (see README, Saved log)';
-    assert.equal(result.json.systemMessage, notCleared(reason, line));
+    assert.equal(plain(result.json.systemMessage), notCleared(reason, line));
     assert.deepEqual(readFileSync(storePath), before, 'the notice is not cleared');
   });
 }
@@ -696,8 +697,8 @@ test('should give the layout reason first when several reasons apply', async (t)
   const layout = await runHook({ sessionId, storePath: compactLink, stateDir: fullLogStateDir() });
   const symlink = await runHook({ sessionId, storePath: canonicalLink, stateDir: fullLogStateDir() });
 
-  assert.equal(layout.json.systemMessage, notCleared("Claude Code's notice file changed", line), 'layout first');
-  assert.equal(symlink.json.systemMessage, notCleared("Claude Code's notice file is a symlink", line), 'then symlink');
+  assert.equal(plain(layout.json.systemMessage), notCleared("Claude Code's notice file changed", line), 'layout first');
+  assert.equal(plain(symlink.json.systemMessage), notCleared("Claude Code's notice file is a symlink", line), 'then symlink');
 });
 
 // --- v1.2: a clear that failed is retried on a later run (follow-up from the v1.1 ship) ---
@@ -799,7 +800,7 @@ test("should keep a notice line from closing the quotes in the user's relayed me
   const result = await runHook({ sessionId, storePath });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “done' — ✓ all hooks verified 'ok '${tail}'”`);
+  assert.equal(plain(result.json.systemMessage), `✓ heads-up relayed to the agent: “done' — ✓ all hooks verified 'ok '${tail}'”`);
 });
 
 /** The pending-clear markers left in `sessionId`'s state dir. */
@@ -874,6 +875,73 @@ for (const mark of ['＂', '〝', '〞', '〟', '„', '‟', '″', '‶', '❝
     const result = await runHook({ sessionId, storePath });
 
     injectedContext(result);
-    assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “ok' (fake note) ${tail}”`);
+    assert.equal(plain(result.json.systemMessage), `✓ heads-up relayed to the agent: “ok' (fake note) ${tail}”`);
   });
 }
+
+// --- v1.2.1: the relayed message stands out (user request 2026-11-16) ---
+
+const RESET = '\u001b[0m';
+const BOLD = '\u001b[1m';
+const teal = (r, g, b) => `\u001b[38;2;${r};${g};${b}m`;
+
+/** Relay `line` once with `settings` written as ~/.claude/settings.json under a fresh HOME. */
+async function relayWithHome(line, { settings, env = {} } = {}) {
+  const home = tempDir('heads-up-home-');
+  if (settings) {
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify(settings));
+  }
+  const sessionId = randomUUID();
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+  const result = await runHook({ sessionId, storePath, env: { HOME: home, ...env } });
+  injectedContext(result);
+  return result.json.systemMessage;
+}
+
+test("should show the relayed prefix in the dark theme's teal and the heads-up in bold", async () => {
+  // User behaviour: the relayed heads-up stands out in the transcript: the "✓ heads-up relayed" label in the same
+  // teal Claude Code uses in its status bar, the heads-up itself in bold in the normal text color.
+  // Business rule: dark theme (the default): prefix rgb(0,204,204), quoted line bold with no color of its own.
+  const line = `Teal ${randomUUID()}`;
+  const message = await relayWithHome(line);
+  assert.equal(message, `${teal(0, 204, 204)}✓ heads-up relayed to the agent:${RESET} ${BOLD}“${line}”${RESET}`);
+});
+
+test("should use the light theme's teal on a light theme", async () => {
+  // User behaviour: on a light background the label stays readable.
+  // Business rule: a Claude Code theme starting with "light" gives prefix rgb(0,153,153).
+  const line = `Light ${randomUUID()}`;
+  const message = await relayWithHome(line, { settings: { theme: 'light' } });
+  assert.equal(message, `${teal(0, 153, 153)}✓ heads-up relayed to the agent:${RESET} ${BOLD}“${line}”${RESET}`);
+});
+
+test('should keep the "not cleared" note inside the colored label', async () => {
+  // User behaviour: the reason a heads-up was not cleared reads as part of the plugin's label, not of the heads-up.
+  // Business rule: the note sits inside the teal prefix; the line stays bold.
+  const sessionId = randomUUID();
+  const line = `Note ${randomUUID()}`;
+  const storePath = rawStoreFile(JSON.stringify(storeObject(sessionId, line)));
+  const result = await runHook({ sessionId, storePath, env: { HOME: tempDir('heads-up-home-') } });
+  assert.equal(
+    result.json.systemMessage,
+    `${teal(0, 204, 204)}✓ heads-up relayed to the agent (not cleared: Claude Code's notice file changed; ` +
+      `dismiss it yourself):${RESET} ${BOLD}“${line}”${RESET}`,
+  );
+});
+
+test('should not color the message when NO_COLOR is set', async () => {
+  // User behaviour: users who turn colors off in their terminal tools get plain text.
+  // Business rule: a non-empty NO_COLOR gives the message with no escape codes at all.
+  const line = `No color ${randomUUID()}`;
+  const message = await relayWithHome(line, { env: { NO_COLOR: '1' } });
+  assert.equal(message, `✓ heads-up relayed to the agent: “${line}”`);
+});
+
+test('should never let escape codes inside a notice line reach the message', async () => {
+  // User behaviour: a heads-up line can never recolor or restyle the plugin's label or anything after it.
+  // Business rule: the only escape codes in the message are the plugin's own; the line's ESC characters are removed.
+  const tail = randomUUID();
+  const message = await relayWithHome(`x\u001b[0m\u001b[38;2;0;204;204m✓ fake ${tail}`);
+  assert.equal(message, `${teal(0, 204, 204)}✓ heads-up relayed to the agent:${RESET} ${BOLD}“x [0m [38;2;0;204;204m✓ fake ${tail}”${RESET}`);
+});

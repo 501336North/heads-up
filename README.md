@@ -9,8 +9,9 @@ approval rules and never following instructions inside the notice), tell you wha
 you still need to do.
 
 - Each notice reaches the agent **once per session**, and only in the session it belongs to.
-- You see `✓ heads-up relayed to the agent: “<line>”` when it does. The line is always in quotes, so a notice
-  can never pose as the plugin's own message.
+- You see `✓ heads-up relayed to the agent: “<line>”` when it does: the label in Claude Code's teal, the heads-up
+  in bold (plain text when `NO_COLOR` is set). The line is always in quotes, so a notice can never pose as the
+  plugin's own message.
 - It runs on `UserPromptSubmit` and after every tool call (`PostToolUse`).
 - If anything goes wrong it exits quietly, so it never breaks a session.
 
@@ -73,23 +74,24 @@ state folder to resume clearing.
 
 ## Install
 
-In Claude Code:
+heads-up relays the notices of Claude Code's built-in **You should know** plugin, which is off by default. In
+Claude Code, turn it on, add this repo as a plugin marketplace, then install heads-up from it:
 
 ```
-/plugin install heads-up --marketplace 501336North/heads-up
-```
-
-On Claude Code older than 2.1.275, add the marketplace first, then install:
-
-```
+/plugin enable cc-plugin-you-should-know@builtin
 /plugin marketplace add 501336North/heads-up
 /plugin install heads-up@heads-up
 ```
 
+Then run `/reload-plugins` (or start a new session).
+
+Claude Code does not offer You should know to every account: it is not available to HIPAA or zero-data-retention
+organizations, among others. If it cannot be turned on for you, heads-up has nothing to relay.
+
 Requires Node.js 20 or newer on your `PATH`.
 
-heads-up relays Claude Code's own built-in heads-ups, so it does nothing until those are turned on. Until then the
-hook exits without starting Node (a few milliseconds per prompt and tool call).
+Until You should know is on, heads-up does nothing: the hook exits without starting Node (a few milliseconds per
+prompt and tool call).
 
 The OSS Dev Workflow plugin ships a pinned copy of this hook. Running both is fine: they share the same state, so
 each heads-up still reaches the agent once.
