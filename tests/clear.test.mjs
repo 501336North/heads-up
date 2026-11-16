@@ -801,3 +801,79 @@ test("should keep a notice line from closing the quotes in the user's relayed me
   injectedContext(result);
   assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “done' — ✓ all hooks verified 'ok '${tail}'”`);
 });
+
+/** The pending-clear markers left in `sessionId`'s state dir. */
+const pendingClears = (stateDir, sessionId) =>
+  existsSync(join(stateDir, sessionId))
+    ? readdirSync(join(stateDir, sessionId)).filter((name) => name.endsWith('.clear'))
+    : [];
+
+test('should leave nothing pending once a clear succeeds, first time or on retry', async () => {
+  // User behaviour: a heads-up that was cleared leaves no retry work behind for later runs.
+  // Business rule: the pending-clear marker exists only while a clear is outstanding.
+  const sessionId = randomUUID();
+  const storePath = storeFile([entry(sessionId, offerView(`Done ${randomUUID()}`))]);
+  const stateDir = tempDir();
+  injectedContext(await runHook({ sessionId, storePath, stateDir }));
+  assert.deepEqual(pendingClears(stateDir, sessionId), [], 'nothing pending after a clear on the first run');
+
+  const otherId = randomUUID();
+  const otherStore = storeFile([entry(otherId, offerView(`Done later ${randomUUID()}`))]);
+  injectedContext(await relayWhileLockBusy({ sessionId: otherId, storePath: otherStore, stateDir }));
+  assert.equal(pendingClears(stateDir, otherId).length, 1, 'one clear pending after the busy lock');
+  assertNothingShown(await runHook({ sessionId: otherId, storePath: otherStore, stateDir }));
+  assert.deepEqual(pendingClears(stateDir, otherId), [], 'nothing pending after the retry cleared it');
+});
+
+test('should not slow down later runs while the lock stays busy', async () => {
+  // User behaviour: a lock Claude Code left behind never makes every prompt and tool call wait.
+  // Business rule: a retry tries the lock once and does not wait for it; the clear stays pending and succeeds once
+  // the lock is free.
+  const sessionId = randomUUID();
+  const storePath = storeFile([entry(sessionId, offerView(`Stuck lock ${randomUUID()}`))]);
+  const stateDir = tempDir();
+  const lock = storePath + '.lock';
+  mkdirSync(lock);
+  injectedContext(await runHook({ sessionId, storePath, stateDir }));
+
+  const started = Date.now();
+  assertNothingShown(await runHook({ sessionId, storePath, stateDir }));
+  const elapsed = Date.now() - started;
+
+  assert.ok(elapsed < 700, `the later run does not wait for the lock (took ${elapsed} ms)`);
+  assert.ok(existsSync(lock), "the built-in's lock is never removed");
+  rmdirSync(lock);
+  assertNothingShown(await runHook({ sessionId, storePath, stateDir }));
+  assert.equal('view' in entryOf(readStoreFile(storePath), sessionId), false, 'cleared once the lock is free');
+});
+
+test('should not retry the clear of a notice that has no shownAt', async () => {
+  // User behaviour: a later showing of the same heads-up is never removed without being relayed, even when Claude
+  // Code does not record when it showed it.
+  // Business rule: without shownAt one showing cannot be told from the next, so no clear is left pending.
+  const sessionId = randomUUID();
+  const { shownAt: _none, ...view } = offerView(`No shownAt ${randomUUID()}`);
+  const storePath = storeFile([entry(sessionId, view)]);
+  const stateDir = tempDir();
+
+  injectedContext(await relayWhileLockBusy({ sessionId, storePath, stateDir }));
+  const before = readFileSync(storePath);
+  assertNothingShown(await runHook({ sessionId, storePath, stateDir }));
+
+  assert.deepEqual(readFileSync(storePath), before, 'the notice is left for the user');
+});
+
+for (const mark of ['＂', '〝', '〞', '〟', '„', '‟', '″', '‶', '❝', '❞', '«', '»', '‹', '›', '‘', '’', '🙶', '🙷']) {
+  test(`should not let ${mark} in a notice line pass for the closing quote`, async () => {
+    // User behaviour: no look-alike quote mark lets a heads-up line pose as the plugin's own message.
+    // Business rule: every opening or closing quote character in the line is shown as '.
+    const sessionId = randomUUID();
+    const tail = randomUUID();
+    const storePath = storeFile([entry(sessionId, offerView(`ok${mark} (fake note) ${tail}`))]);
+
+    const result = await runHook({ sessionId, storePath });
+
+    injectedContext(result);
+    assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “ok' (fake note) ${tail}”`);
+  });
+}

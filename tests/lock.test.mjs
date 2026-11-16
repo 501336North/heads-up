@@ -2,9 +2,9 @@
 // Claude Code's own notice updates for long.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lstatSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { takeLock } from '../core/heads-up.mjs';
+import { releaseLock, takeLock } from '../core/heads-up.mjs';
 import { tempDir } from './helpers.mjs';
 
 // Claude Code's store lock (proper-lockfile, default options) treats a lock whose mtime is older than this as stale
@@ -26,4 +26,26 @@ test('should leave a lock that Claude Code treats as stale within about 3 s if t
   assert.ok(lstatSync(lock).isDirectory(), 'the lock is a directory, as the built-in expects');
   assert.ok(staleAt <= before + 3_500, `stale within 3.5 s (after ${Math.round(staleAt - before)} ms)`);
   assert.ok(staleAt >= after + 2_000, `not stale before 2 s (after ${Math.round(staleAt - after)} ms)`);
+});
+
+test('should never remove a lock that Claude Code took over', () => {
+  // User behaviour: the hook never pulls Claude Code's own lock out from under it, even if the hook was stalled so
+  // long that Claude Code took the lock over.
+  // Business rule: the hook releases the lock only while it is still the one it created (same dir identity).
+  const lock = join(tempDir(), 'store.json.lock');
+  const owned = takeLock(lock);
+  rmdirSync(lock);
+  mkdirSync(lock);
+
+  releaseLock(lock, owned);
+
+  assert.ok(existsSync(lock), "Claude Code's lock is left in place");
+});
+
+test('should release the lock it still holds', () => {
+  // User behaviour: after the hook's clear, Claude Code can update its notices right away.
+  // Business rule: a lock the hook created and still holds is removed on release.
+  const lock = join(tempDir(), 'store.json.lock');
+  releaseLock(lock, takeLock(lock));
+  assert.equal(existsSync(lock), false, 'the lock is gone');
 });

@@ -108,14 +108,15 @@ export function isExpectedShape(store) {
 }
 
 /**
- * The plugin version: from .claude-plugin/plugin.json above the script, else (a pinned copy inside another plugin,
- * such as OSS) from VENDORED.json beside it; 'unknown' when neither can be read.
+ * The plugin version (a string): from VENDORED.json beside the script (a pinned copy inside another plugin, such as
+ * OSS, whose own plugin.json may sit above it), else from .claude-plugin/plugin.json above it; else 'unknown'.
  */
 function pluginVersion() {
   const here = dirname(fileURLToPath(import.meta.url));
-  for (const path of [join(here, '..', '.claude-plugin', 'plugin.json'), join(here, 'VENDORED.json')]) {
+  for (const path of [join(here, 'VENDORED.json'), join(here, '..', '.claude-plugin', 'plugin.json')]) {
     try {
-      return JSON.parse(readFileSync(path, 'utf8')).version;
+      const { version } = JSON.parse(readFileSync(path, 'utf8'));
+      if (isString(version)) return version;
     } catch {
       // Try the next source.
     }
@@ -417,23 +418,25 @@ const noticeMarker = (line) => createHash('sha256').update(line).digest('hex').s
 
 /**
  * The pending-clear marker name for one showing of a notice (its line and shownAt; matches CLEAR_MARKER), so a
- * retry never clears the same line shown again later.
+ * retry never clears the same line shown again later. Undefined without a shownAt: showings cannot be told apart.
  */
 const clearMarker = (view) =>
-  noticeMarker(JSON.stringify([view.line, view.shownAt ?? null])) + '.clear';
+  isAbsent(view.shownAt) ? undefined : noticeMarker(JSON.stringify([view.line, view.shownAt])) + '.clear';
 
 const clearingOff = () => process.env.HEADS_UP_CLEAR?.trim().toLowerCase() === 'off';
 
 /**
  * In the cwd (the verified session dir of `entry`, already relayed this session): when its pending-clear marker
- * exists, the notice was logged and its clear has not completed, so try the clear again; the marker is removed
- * once a clear completes (cleared, or the view no longer matches). Never with clearing off. Never throws.
+ * exists, the notice was logged and its clear has not completed, so try the clear again, taking the lock in a
+ * single attempt (a busy lock never makes a run wait); the marker is removed once a clear completes (cleared, or
+ * the view no longer matches). Never with clearing off. Returns whether a retry was tried. Never throws.
  */
 function retryClear(path, entry) {
-  if (clearingOff()) return;
+  if (clearingOff()) return false;
   const marker = clearMarker(entry.view);
-  if (!lstatOrUndefined(marker)?.isFile()) return;
-  if (bestEffort(() => clearDelivered(path, entry))) bestEffort(() => unlinkSync(marker));
+  if (!marker || !lstatOrUndefined(marker)?.isFile()) return false;
+  if (bestEffort(() => clearDelivered(path, entry, 1))) bestEffort(() => unlinkSync(marker));
+  return true;
 }
 
 /**
@@ -491,6 +494,8 @@ function contextFor(input) {
     if (oneLine(entry.view.line, LINE_MAX) !== '') candidates.push(entry);
   }
   const claim = claimer();
+  // At most one clear is retried per run.
+  let retried = false;
   for (const entry of candidates) {
     // Keyed on the matched entry's id, so the notice is handled once whichever id the run arrives under.
     let claimed;
@@ -498,7 +503,7 @@ function contextFor(input) {
       claimed = claim(entry.id, noticeMarker(entry.view.line));
     } catch (error) {
       if (error.code === 'EEXIST') {
-        retryClear(path, entry);
+        if (!retried) retried = retryClear(path, entry);
         continue;
       }
       throw error;
@@ -642,22 +647,33 @@ const LOCK_RETRY_MS = 100;
 const LOCK_BACKDATE_MS = 7_000;
 
 /**
- * Take the lock dir `lock` (mkdir is atomic), retrying only while it exists, then backdate its mtime (see
- * LOCK_BACKDATE_MS). Throws when it stays busy or on any other error, so a lock this run did not create is never
- * removed.
+ * Take the lock dir `lock` (mkdir is atomic), trying up to `maxTries` times while it exists, then backdate its mtime
+ * (see LOCK_BACKDATE_MS) and return its lstat, which identifies it for holdsLock. Throws when it stays busy or on any
+ * other error, so a lock this run did not create is never removed.
  */
-export function takeLock(lock) {
+export function takeLock(lock, maxTries = LOCK_TRIES) {
   for (let tries = 1; ; tries++) {
     try {
       mkdirSync(lock);
       const backdated = new Date(Date.now() - LOCK_BACKDATE_MS);
       bestEffort(() => utimesSync(lock, backdated, backdated));
-      return;
+      return lstatSync(lock);
     } catch (error) {
-      if (error.code !== 'EEXIST' || tries === LOCK_TRIES) throw error;
+      if (error.code !== 'EEXIST' || tries >= maxTries) throw error;
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_RETRY_MS);
   }
+}
+
+/** Whether the lock dir `lock` is still the one `owned` (takeLock's result) describes: the built-in never took it over. */
+const holdsLock = (lock, owned) => {
+  const now = lstatOrUndefined(lock);
+  return Boolean(now?.isDirectory() && sameDir(now, owned));
+};
+
+/** Remove the lock dir `lock` only while it is still the one this run took (`owned`). */
+export function releaseLock(lock, owned) {
+  if (holdsLock(lock, owned)) rmdirSync(lock);
 }
 
 /**
@@ -686,12 +702,12 @@ function openTemp(path) {
  * atomically: a temp file (see openTemp) in the store's dir, given the store's mode, renamed over the store.
  * Throws on any failure; callers use bestEffort.
  */
-function clearDelivered(path, delivered) {
+function clearDelivered(path, delivered, lockTries = LOCK_TRIES) {
   // The rename would replace a symlink with a file (and anything else is not the store): a quick refusal by lstat
   // before waiting for the lock; checked again under it.
   if (!lstatSync(path).isFile()) throw new Error('store is not a regular file');
   const lock = path + '.lock';
-  takeLock(lock);
+  const owned = takeLock(lock, lockTries);
   try {
     // The built-in replaces the store by rename, so its identity is taken under the lock: a regular file by lstat,
     // then read from that very file (not through a symlink, same dev/ino).
@@ -719,13 +735,15 @@ function clearDelivered(path, delivered) {
       } finally {
         closeSync(fd);
       }
+      // A hold so long that the built-in took the lock over must not overwrite what it wrote since.
+      if (!holdsLock(lock, owned)) throw new Error('lock taken over');
       renameSync(temp, path);
     } catch (error) {
       bestEffort(() => unlinkSync(temp));
       throw error;
     }
   } finally {
-    rmdirSync(lock);
+    releaseLock(lock, owned);
   }
 }
 
@@ -747,7 +765,7 @@ function deliver(hookEventName, { text: additionalContext, claimed, path, delive
     const reason = clearOff ? undefined : cannotClear || claimed.logProblem;
     const note = reason ? ` (not cleared: ${reason}; dismiss it yourself)` : '';
     // The line is quoted, and quote characters in it become ', so it can never pose as the plugin's own text.
-    const quoted = oneLine(delivered.view.line, LINE_MAX).replace(/["“”]/g, "'");
+    const quoted = oneLine(delivered.view.line, LINE_MAX).replace(QUOTE_MARKS, "'");
     output.systemMessage = `✓ heads-up relayed to the agent${note}: “${quoted}”`;
   }
   const payload = Buffer.from(JSON.stringify(output));
@@ -764,13 +782,18 @@ function deliver(hookEventName, { text: additionalContext, claimed, path, delive
   if (logged && !clearOff) {
     // A pending-clear marker, left until the clear completes, lets a later run retry a clear that failed.
     const marker = clearMarker(delivered.view);
-    const marked = bestEffort(() => inSession(claimed, () => closeSync(openSync(marker, 'wx', 0o600))));
+    const marked =
+      marker !== undefined && bestEffort(() => inSession(claimed, () => closeSync(openSync(marker, 'wx', 0o600))));
     if (bestEffort(() => clearDelivered(path, delivered)) && marked) {
       bestEffort(() => inSession(claimed, () => unlinkSync(marker)));
     }
   }
   bestEffort(() => prune(claimed));
 }
+
+// Every opening or closing quote character, plus look-alikes outside those classes (ASCII and fullwidth double
+// quote, low-9 and reversed quotes, primes, ornamental and CJK quotes).
+const QUOTE_MARKS = /[\p{Pi}\p{Pf}"＂„‟〝〞〟″‶❝❞🙶🙷]/gu;
 
 /** Run `fn` with the verified session dir of `claimed` as the cwd (root, then session dir, each re-verified). */
 function inSession({ root, stat, session }, fn) {
