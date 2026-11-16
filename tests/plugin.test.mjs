@@ -98,3 +98,20 @@ test('should still run the hook when the script is reached through a symlink', a
 
   assert.ok(injectedContext(result).includes(view.line));
 });
+
+test('should be installable from this repo as a marketplace listing the heads-up plugin', () => {
+  // User behaviour: anyone can install the plugin with `/plugin marketplace add 501336North/heads-up` and then
+  // `/plugin install heads-up@heads-up`, and gets the same version the manifest names.
+  // Business rule: the repo's marketplace lists exactly one plugin, "heads-up", served from the repo root, with the
+  // same version and description as .claude-plugin/plugin.json.
+  const marketplace = readJson('.claude-plugin/marketplace.json');
+  const manifest = readJson('.claude-plugin/plugin.json');
+  assert.equal(marketplace.name, 'heads-up');
+  assert.deepEqual(marketplace.owner, { name: 'Yanick Lavoie' });
+  assert.equal(marketplace.plugins.length, 1);
+  const [listed] = marketplace.plugins;
+  assert.equal(listed.name, 'heads-up');
+  assert.equal(listed.source, './');
+  assert.equal(listed.version, manifest.version, 'the listed version matches the manifest');
+  assert.equal(listed.description, manifest.description, 'the listed description matches the manifest');
+});

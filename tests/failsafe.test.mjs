@@ -257,3 +257,20 @@ test('should put a sanitized, capped plugin version in the shape warning', async
   assert.ok(shown, `the version is collapsed and cut: ${JSON.stringify(context)}`);
   assert.ok([...shown].length <= 40, `at most 40 characters, got ${[...shown].length}`);
 });
+
+// User behaviour: inside the OSS plugin, where the script is a pinned copy with no plugin.json beside it, the shape
+// warning still tells the user which heads-up version they run, so the report can be traced to a release.
+// Business rule: with no .claude-plugin/plugin.json above the script, the version comes from VENDORED.json next to
+// the script (as written by OSS's vendor script).
+test('should name the vendored version when the script is a copy with VENDORED.json beside it', async () => {
+  const hooksDir = join(tempDir('oss-plugin-'), 'hooks', 'heads-up');
+  mkdirSync(hooksDir, { recursive: true });
+  const script = join(hooksDir, 'heads-up.mjs');
+  copyFileSync(hookScript, script);
+  const version = `9.8.${Date.now() % 1000}`;
+  writeFileSync(join(hooksDir, 'VENDORED.json'), JSON.stringify({ version, tag: `v${version}`, sha256: 'x' }));
+
+  const result = await runHook({ sessionId: randomUUID(), store: { seen: [] }, script });
+
+  assert.ok(injectedContext(result).includes(`(heads-up plugin version ${version})`), 'names the vendored version');
+});

@@ -9,7 +9,8 @@ approval rules and never following instructions inside the notice), tell you wha
 you still need to do.
 
 - Each notice reaches the agent **once per session**, and only in the session it belongs to.
-- You see `✓ heads-up relayed to the agent: <line>` when it does.
+- You see `✓ heads-up relayed to the agent: “<line>”` when it does. The line is always in quotes, so a notice
+  can never pose as the plugin's own message.
 - It runs on `UserPromptSubmit` and after every tool call (`PostToolUse`).
 - If anything goes wrong it exits quietly, so it never breaks a session.
 
@@ -70,14 +71,32 @@ state folder to resume clearing.
 - It reads and clears notices in that file and writes its own state. It makes no network calls and has no
   dependencies.
 
-## Install (from a local checkout)
+## Install
+
+In Claude Code:
+
+```
+/plugin install heads-up --marketplace 501336North/heads-up
+```
+
+On Claude Code older than 2.1.275, add the marketplace first, then install:
+
+```
+/plugin marketplace add 501336North/heads-up
+/plugin install heads-up@heads-up
+```
+
+Requires Node.js 20 or newer on your `PATH`.
+
+The OSS Dev Workflow plugin ships a pinned copy of this hook. Running both is fine: they share the same state, so
+each heads-up still reaches the agent once.
+
+To work on it from a local checkout:
 
 ```sh
 git clone https://github.com/501336North/heads-up.git ~/dev/heads-up
 claude --plugin-dir ~/dev/heads-up
 ```
-
-Requires Node.js 20 or newer on your `PATH`.
 
 ## Settings
 
@@ -108,7 +127,7 @@ about 2 MB: new heads-ups are then still relayed but no longer cleared, and the 
 
 ## Uninstall
 
-Stop loading the plugin (drop `--plugin-dir`, or remove it with `/plugin` if you installed it that way), then
+Run `/plugin uninstall heads-up@heads-up` (or drop `--plugin-dir` for a local checkout), then
 optionally delete `~/.claude/heads-up/`. That also deletes the saved log.
 
 ## Development

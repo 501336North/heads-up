@@ -102,9 +102,12 @@ test("should leave other sessions' notices in the store untouched", async () => 
   assert.deepEqual(entryOf(after, sessionB), entryOf(before, sessionB), "session B's notice is untouched");
 });
 
+/** The normal relayed message for `line`: the line is quoted, so it reads as the notice, not as the plugin. */
+const relayed = (line) => `✓ heads-up relayed to the agent: “${line}”`;
+
 test('should tell the user the notice was relayed', async () => {
   // User behaviour: the user sees a short confirmation that the agent now has the heads-up, and which one.
-  // Business rule: the message is exactly the check mark prefix followed by the notice line.
+  // Business rule: the message is exactly the check mark prefix followed by the notice line in quotes.
   const sessionId = randomUUID();
   const line = `Relay me ${randomUUID()}`;
   const storePath = storeFile([entry(sessionId, offerView(line))]);
@@ -112,7 +115,7 @@ test('should tell the user the notice was relayed', async () => {
   const result = await runHook({ sessionId, storePath });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line);
+  assert.equal(result.json.systemMessage, relayed(line));
 });
 
 test('should clear the entry it delivered for a resumed session', async () => {
@@ -141,7 +144,7 @@ test('should not clear a notice the user has opened', async () => {
     const result = await runHook({ sessionId, storePath });
 
     assert.ok(injectedContext(result).includes(line), `the ${kind} notice still reaches the agent`);
-    assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line, 'the user is told');
+    assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
     assert.deepEqual(readFileSync(storePath), before, `the ${kind} notice is left in the store unchanged`);
   }
 });
@@ -180,7 +183,7 @@ test('should not touch the store while the built-in holds its lock', async () =>
   const elapsed = Date.now() - started;
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line, 'the user is told');
+  assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
   assert.deepEqual(readFileSync(storePath), before, 'the store is left unchanged');
   assert.ok(existsSync(lock), "the built-in's lock is never removed");
   assert.ok(elapsed < 3000, `the run gives up within 3 s (took ${elapsed} ms)`);
@@ -357,7 +360,7 @@ test('should still relay when the store cannot be rewritten', async (t) => {
   const result = await runHook({ sessionId, storePath });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line, 'the user is told');
+  assert.equal(result.json.systemMessage, relayed(line), 'the user is told');
   assert.equal(result.stderr, '', 'nothing on stderr');
   assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
   assert.deepEqual(readdirSync(dir), listedBefore, 'no lock or temp file is left');
@@ -533,7 +536,7 @@ test("should tell the user when the notice file's layout prevents clearing", asy
   const result = await runHook({ sessionId, storePath });
 
   assert.ok(injectedContext(result).includes(line), 'the notice still reaches the agent');
-  assert.equal(result.json.systemMessage, NOT_CLEARED + line);
+  assert.equal(result.json.systemMessage, NOT_CLEARED + `“${line}”`);
   assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
 });
 
@@ -547,7 +550,7 @@ test('should give the normal relayed message for a store in the built-in layout'
   const result = await runHook({ sessionId, storePath });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line);
+  assert.equal(result.json.systemMessage, relayed(line));
 });
 
 test('should give the normal relayed message with HEADS_UP_CLEAR=off whatever the layout', async () => {
@@ -560,12 +563,12 @@ test('should give the normal relayed message with HEADS_UP_CLEAR=off whatever th
   const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: 'off' } });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line);
+  assert.equal(result.json.systemMessage, relayed(line));
 });
 
 /** The relayed message with a "not cleared" note giving `reason`. */
 const notCleared = (reason, line) =>
-  `✓ heads-up relayed to the agent (not cleared: ${reason}; dismiss it yourself): ${line}`;
+  `✓ heads-up relayed to the agent (not cleared: ${reason}; dismiss it yourself): “${line}”`;
 
 test('should tell the user when the notice file is a symlink, which is never cleared', async (t) => {
   // User behaviour: a user whose notice file is a link learns that heads-ups are not cleared for them.
@@ -631,7 +634,7 @@ test('should not call a large log full when it can still be rotated', async () =
   const result = await runHook({ sessionId, storePath, stateDir });
 
   injectedContext(result);
-  assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + line);
+  assert.equal(result.json.systemMessage, relayed(line));
   assert.equal('view' in entryOf(readStoreFile(storePath), sessionId), false, 'the notice is cleared');
   assert.equal(readFileSync(join(stateDir, 'heads-up.log.1'), 'utf8'), old, 'the old log is rotated');
   assert.ok(readFileSync(join(stateDir, 'heads-up.log'), 'utf8').includes(line), 'the new entry is saved');
@@ -695,4 +698,106 @@ test('should give the layout reason first when several reasons apply', async (t)
 
   assert.equal(layout.json.systemMessage, notCleared("Claude Code's notice file changed", line), 'layout first');
   assert.equal(symlink.json.systemMessage, notCleared("Claude Code's notice file is a symlink", line), 'then symlink');
+});
+
+// --- v1.2: a clear that failed is retried on a later run (follow-up from the v1.1 ship) ---
+
+/** Relay `line` once while the built-in holds its lock (so the clear fails), then free the lock. */
+async function relayWhileLockBusy({ sessionId, storePath, stateDir, env = {} }) {
+  const lock = storePath + '.lock';
+  mkdirSync(lock);
+  const first = await runHook({ sessionId, storePath, stateDir, env });
+  rmdirSync(lock);
+  return first;
+}
+
+test('should clear on a later run a notice whose clear failed because the lock was busy', async () => {
+  // User behaviour: a heads-up relayed while Claude Code was busy writing its notices still disappears for the
+  // user soon after, instead of sitting there until it expires.
+  // Business rule: a relayed and logged notice whose clear failed is cleared by the next run of the same session,
+  // and is not relayed to the agent a second time.
+  const sessionId = randomUUID();
+  const line = `Retry me ${randomUUID()}`;
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+  const stateDir = tempDir();
+
+  const first = await relayWhileLockBusy({ sessionId, storePath, stateDir });
+  assert.ok(injectedContext(first).includes(line), 'the first run relays the notice');
+  assert.ok('view' in entryOf(readStoreFile(storePath), sessionId), 'the busy lock stopped the first clear');
+
+  const second = await runHook({ sessionId, storePath, stateDir });
+
+  assertNothingShown(second);
+  assert.equal('view' in entryOf(readStoreFile(storePath), sessionId), false, 'the later run cleared it');
+});
+
+test('should not clear on a later run a notice whose log entry was never saved', async () => {
+  // User behaviour: a heads-up whose "Learn more" text could not be saved stays on screen for the user to open,
+  // even after the saved log is fixed.
+  // Business rule: a clear is retried only for a notice that was logged; a notice relayed while the log could not
+  // be written is never cleared by a later run.
+  const stateDir = markStateDir(tempDir());
+  const log = join(stateDir, 'heads-up.log');
+  mkdirSync(log);
+  const sessionId = randomUUID();
+  const line = `Never logged ${randomUUID()}`;
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+
+  injectedContext(await runHook({ sessionId, storePath, stateDir }));
+  rmdirSync(log);
+  const before = readFileSync(storePath);
+  const second = await runHook({ sessionId, storePath, stateDir });
+
+  assertNothingShown(second);
+  assert.deepEqual(readFileSync(storePath), before, 'the notice is left for the user');
+});
+
+test('should not retry a failed clear when clearing is turned off', async () => {
+  // User behaviour: a user who turns clearing off keeps every heads-up on screen from then on.
+  // Business rule: with HEADS_UP_CLEAR=off, a later run never clears, even a notice whose earlier clear failed.
+  const sessionId = randomUUID();
+  const line = `Off later ${randomUUID()}`;
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+  const stateDir = tempDir();
+
+  injectedContext(await relayWhileLockBusy({ sessionId, storePath, stateDir }));
+  const before = readFileSync(storePath);
+  const second = await runHook({ sessionId, storePath, stateDir, env: { HEADS_UP_CLEAR: 'off' } });
+
+  assertNothingShown(second);
+  assert.deepEqual(readFileSync(storePath), before, 'the notice is left for the user');
+});
+
+test('should not clear on a later run the same notice shown again', async () => {
+  // User behaviour: when Claude Code shows the same heads-up again later, the hook does not silently remove that
+  // new showing (it was never relayed for it).
+  // Business rule: the retry is only for the showing that was relayed (same line and shownAt).
+  const sessionId = randomUUID();
+  const line = `Shown again ${randomUUID()}`;
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+  const stateDir = tempDir();
+
+  injectedContext(await relayWhileLockBusy({ sessionId, storePath, stateDir }));
+  const reshown = { ...offerView(line), shownAt: Date.now() + 60_000 };
+  replaceStore(storePath, { sessions: [entry(sessionId, reshown)], seen: ['An older notice'] });
+  const before = readFileSync(storePath);
+  const second = await runHook({ sessionId, storePath, stateDir });
+
+  assertNothingShown(second);
+  assert.deepEqual(readFileSync(storePath), before, 'the new showing is left for the user');
+});
+
+test("should keep a notice line from closing the quotes in the user's relayed message", async () => {
+  // User behaviour: a heads-up line can never pose as the plugin's own message (for example a fake "✓ all
+  // clear"), because the user always sees exactly where the quoted notice starts and ends.
+  // Business rule: quote characters inside the line (", “, ”) are shown as ' so only the plugin's own quotes remain.
+  const sessionId = randomUUID();
+  const tail = randomUUID();
+  const line = `done” — ✓ all hooks verified “ok "${tail}"`;
+  const storePath = storeFile([entry(sessionId, offerView(line))]);
+
+  const result = await runHook({ sessionId, storePath });
+
+  injectedContext(result);
+  assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “done' — ✓ all hooks verified 'ok '${tail}'”`);
 });
