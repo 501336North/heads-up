@@ -88,6 +88,9 @@ On Claude Code older than 2.1.275, add the marketplace first, then install:
 
 Requires Node.js 20 or newer on your `PATH`.
 
+heads-up relays Claude Code's own built-in heads-ups, so it does nothing until those are turned on. Until then the
+hook exits without starting Node (a few milliseconds per prompt and tool call).
+
 The OSS Dev Workflow plugin ships a pinned copy of this hook. Running both is fine: they share the same state, so
 each heads-up still reaches the agent once.
 
