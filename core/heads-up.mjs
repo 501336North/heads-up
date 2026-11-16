@@ -648,7 +648,7 @@ const LOCK_BACKDATE_MS = 7_000;
 
 /**
  * Take the lock dir `lock` (mkdir is atomic), trying up to `maxTries` times while it exists, then backdate its mtime
- * (see LOCK_BACKDATE_MS) and return its lstat, which identifies it for holdsLock. Throws when it stays busy or on any
+ * (see LOCK_BACKDATE_MS) and return its lstat (bigint), which identifies it for holdsLock. Throws when it stays busy or on any
  * other error, so a lock this run did not create is never removed.
  */
 export function takeLock(lock, maxTries = LOCK_TRIES) {
@@ -657,7 +657,7 @@ export function takeLock(lock, maxTries = LOCK_TRIES) {
       mkdirSync(lock);
       const backdated = new Date(Date.now() - LOCK_BACKDATE_MS);
       bestEffort(() => utimesSync(lock, backdated, backdated));
-      return lstatSync(lock);
+      return lstatSync(lock, { bigint: true });
     } catch (error) {
       if (error.code !== 'EEXIST' || tries >= maxTries) throw error;
     }
@@ -665,10 +665,19 @@ export function takeLock(lock, maxTries = LOCK_TRIES) {
   }
 }
 
-/** Whether the lock dir `lock` is still the one `owned` (takeLock's result) describes: the built-in never took it over. */
+/**
+ * Whether the lock dir `lock` is still the one `owned` (takeLock's bigint lstat) describes: the built-in never took it
+ * over. dev/ino alone is not enough (Linux reuses a removed dir's inode for the next mkdir), so the mtime must still
+ * be the one this run backdated it to: a lock the built-in creates has an mtime of "now", seconds away from ours.
+ */
 const holdsLock = (lock, owned) => {
-  const now = lstatOrUndefined(lock);
-  return Boolean(now?.isDirectory() && sameDir(now, owned));
+  let now;
+  try {
+    now = lstatSync(lock, { bigint: true });
+  } catch {
+    return false;
+  }
+  return now.isDirectory() && sameDir(now, owned) && now.mtimeNs === owned.mtimeNs;
 };
 
 /** Remove the lock dir `lock` only while it is still the one this run took (`owned`). */

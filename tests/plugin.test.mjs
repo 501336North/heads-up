@@ -145,6 +145,7 @@ async function runRegistered({ home, env = {}, sessionId = randomUUID() }) {
   });
   let stdout = '';
   child.stdout.on('data', (d) => (stdout += d));
+  child.stdin.on('error', () => {}); // without a store the command exits before reading stdin
   child.stdin.end(
     JSON.stringify({ session_id: sessionId, transcript_path: `/x/${sessionId}.jsonl`, hook_event_name: 'PostToolUse' }),
   );
