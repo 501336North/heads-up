@@ -257,3 +257,37 @@ test('should put a sanitized, capped plugin version in the shape warning', async
   assert.ok(shown, `the version is collapsed and cut: ${JSON.stringify(context)}`);
   assert.ok([...shown].length <= 40, `at most 40 characters, got ${[...shown].length}`);
 });
+
+// User behaviour: inside the OSS plugin, where the script is a pinned copy with no plugin.json beside it, the shape
+// warning still tells the user which heads-up version they run, so the report can be traced to a release.
+// Business rule: with no .claude-plugin/plugin.json above the script, the version comes from VENDORED.json next to
+// the script (as written by OSS's vendor script).
+test('should name the vendored version when the script is a copy with VENDORED.json beside it', async () => {
+  const hooksDir = join(tempDir('oss-plugin-'), 'hooks', 'heads-up');
+  mkdirSync(hooksDir, { recursive: true });
+  const script = join(hooksDir, 'heads-up.mjs');
+  copyFileSync(hookScript, script);
+  const version = `9.8.${Date.now() % 1000}`;
+  writeFileSync(join(hooksDir, 'VENDORED.json'), JSON.stringify({ version, tag: `v${version}`, sha256: 'x' }));
+
+  const result = await runHook({ sessionId: randomUUID(), store: { seen: [] }, script });
+
+  assert.ok(injectedContext(result).includes(`(heads-up plugin version ${version})`), 'names the vendored version');
+});
+
+// User behaviour: a pinned copy reports its own heads-up release, never the version of the plugin it sits in.
+// Business rule: VENDORED.json beside the script wins over a plugin.json above it; a version must be a string.
+test('should name the vendored version even when the host plugin has a plugin.json above the copy', async () => {
+  const host = tempDir('host-plugin-');
+  mkdirSync(join(host, '.claude-plugin'));
+  writeFileSync(join(host, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'host', version: '2.1.3' }));
+  mkdirSync(join(host, 'core'));
+  const script = join(host, 'core', 'heads-up.mjs');
+  copyFileSync(hookScript, script);
+  const version = `5.4.${Date.now() % 1000}`;
+  writeFileSync(join(host, 'core', 'VENDORED.json'), JSON.stringify({ version, tag: `v${version}`, sha256: 'x' }));
+
+  const result = await runHook({ sessionId: randomUUID(), store: { seen: [] }, script });
+
+  assert.ok(injectedContext(result).includes(`(heads-up plugin version ${version})`), 'names the vendored version');
+});

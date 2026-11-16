@@ -73,7 +73,7 @@ for (const value of ['off', 'OFF', ' Off ']) {
     const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: value } });
 
     assert.ok(injectedContext(result).includes(view.line), 'the notice still reaches the agent');
-    assert.equal(result.json.systemMessage, '✓ heads-up relayed to the agent: ' + view.line, 'the user is told');
+    assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “${view.line}”`, 'the user is told');
     assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
     assert.equal(existsSync(storePath + '.lock'), false, 'no lock is left');
   });
@@ -220,4 +220,23 @@ test('should still inject when pruning fails', async (t) => {
 
   assert.equal(result.stderr, '');
   assert.ok(injectedContext(result).includes(view.line));
+});
+
+test('should prune old pending-clear markers like any other marker', async () => {
+  // User behaviour: a heads-up whose clear never completed leaves nothing behind on the user's disk for good.
+  // Business rule: a pending-clear marker (16 lowercase hex chars + ".clear") older than 30 days is deleted; a newer
+  // one is kept; a file that only looks similar is kept.
+  const stateDir = markStateDir(tempDir());
+  const dir = aged(join(stateDir, 'clear-session'), 400, { dir: true });
+  const oldPending = aged(join(dir, 'aaaaaaaaaaaaaaaa.clear'), 31);
+  const newPending = aged(join(dir, 'bbbbbbbbbbbbbbbb.clear'), 1);
+  const lookalike = aged(join(dir, 'cccccccccccccccc.clear.bak'), 400);
+  aged(dir, 400, { dir: true });
+
+  const result = await runUnrelated(stateDir);
+
+  assert.ok(result.json, 'the unrelated notice is still injected');
+  assert.equal(existsSync(oldPending), false, 'old pending-clear marker deleted');
+  assert.ok(existsSync(newPending), 'new pending-clear marker kept');
+  assert.ok(existsSync(lookalike), 'a file that is not exactly a pending-clear marker kept');
 });

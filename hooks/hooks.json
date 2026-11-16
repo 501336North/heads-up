@@ -2,13 +2,13 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/heads-up.mjs\"", "timeout": 5 }]
+        "hooks": [{ "type": "command", "command": "for f in \"${HEADS_UP_STORE:-}\" \"$HOME\"/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json; do [ -n \"$f\" ] && [ -e \"$f\" ] && exec node \"${CLAUDE_PLUGIN_ROOT}/core/heads-up.mjs\"; done; exit 0", "timeout": 5 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "*",
-        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/core/heads-up.mjs\"", "timeout": 5 }]
+        "hooks": [{ "type": "command", "command": "for f in \"${HEADS_UP_STORE:-}\" \"$HOME\"/.claude/plugins/store/cc-plugin-you-should-know_builtin-*.json; do [ -n \"$f\" ] && [ -e \"$f\" ] && exec node \"${CLAUDE_PLUGIN_ROOT}/core/heads-up.mjs\"; done; exit 0", "timeout": 5 }]
       }
     ]
   }

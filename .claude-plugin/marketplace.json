@@ -1,0 +1,12 @@
+{
+  "name": "heads-up",
+  "owner": { "name": "Yanick Lavoie" },
+  "plugins": [
+    {
+      "name": "heads-up",
+      "source": "./",
+      "description": "Tells the agent about Claude Code heads-ups for its own session, once, so it can check them and tell you.",
+      "version": "1.2.0"
+    }
+  ]
+}
