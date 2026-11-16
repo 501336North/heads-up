@@ -180,3 +180,6 @@ export async function runWithClosedStdout({ sessionId, storePath, stateDir }) {
   const code = await new Promise((resolve) => child.on('close', resolve));
   return { code, stderr };
 }
+
+/** `text` without ANSI SGR color/bold codes, for asserting what the user reads. */
+export const plain = (text) => text.replace(/\u001b\[[0-9;]*m/g, '');

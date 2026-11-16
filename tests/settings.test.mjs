@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
-import { aged, injectedContext, markStateDir, runHook, storeWithView, tempDir, writeBuiltinStore } from './helpers.mjs';
+import { aged, injectedContext, markStateDir, runHook, storeWithView, tempDir, writeBuiltinStore, plain } from './helpers.mjs';
 
 const view = { line: 'The build cache is stale', explanation: 'Rebuild before testing.' };
 
@@ -73,7 +73,7 @@ for (const value of ['off', 'OFF', ' Off ']) {
     const result = await runHook({ sessionId, storePath, env: { HEADS_UP_CLEAR: value } });
 
     assert.ok(injectedContext(result).includes(view.line), 'the notice still reaches the agent');
-    assert.equal(result.json.systemMessage, `✓ heads-up relayed to the agent: “${view.line}”`, 'the user is told');
+    assert.equal(plain(result.json.systemMessage), `✓ heads-up relayed to the agent: “${view.line}”`, 'the user is told');
     assert.deepEqual(readFileSync(storePath), before, 'the store is unchanged');
     assert.equal(existsSync(storePath + '.lock'), false, 'no lock is left');
   });
