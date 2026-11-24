@@ -75,13 +75,16 @@ state folder to resume clearing.
 ## Install
 
 heads-up relays the notices of Claude Code's built-in **You should know** plugin, which is off by default. In
-Claude Code, turn it on, add this repo as a plugin marketplace, then install heads-up from it:
+Claude Code, turn it on, add the One Shot Ship marketplace, then install heads-up from it:
 
 ```
 /plugin enable cc-plugin-you-should-know@builtin
-/plugin marketplace add 501336North/heads-up
-/plugin install heads-up@heads-up
+/plugin marketplace add 501336North/one-shot-ship-plugin
+/plugin install heads-up@one-shot-ship-plugin
 ```
+
+heads-up is free and works on its own. The marketplace also lists `oss`, the [One Shot Ship](https://oneshotship.com)
+workflow plugin, which already includes heads-up; you don't need it to use heads-up.
 
 Then run `/reload-plugins` (or start a new session).
 

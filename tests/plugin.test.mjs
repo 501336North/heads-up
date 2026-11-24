@@ -102,21 +102,16 @@ test('should still run the hook when the script is reached through a symlink', a
   assert.ok(injectedContext(result).includes(view.line));
 });
 
-test('should be installable from this repo as a marketplace listing the heads-up plugin', () => {
-  // User behaviour: anyone can install the plugin with `/plugin marketplace add 501336North/heads-up` and then
-  // `/plugin install heads-up@heads-up`, and gets the same version the manifest names.
-  // Business rule: the repo's marketplace lists exactly one plugin, "heads-up", served from the repo root, with the
-  // same version and description as .claude-plugin/plugin.json.
-  const marketplace = readJson('.claude-plugin/marketplace.json');
-  const manifest = readJson('.claude-plugin/plugin.json');
-  assert.equal(marketplace.name, 'heads-up');
-  assert.deepEqual(marketplace.owner, { name: 'Yanick Lavoie' });
-  assert.equal(marketplace.plugins.length, 1);
-  const [listed] = marketplace.plugins;
-  assert.equal(listed.name, 'heads-up');
-  assert.equal(listed.source, './');
-  assert.equal(listed.version, manifest.version, 'the listed version matches the manifest');
-  assert.equal(listed.description, manifest.description, 'the listed description matches the manifest');
+test('should be installed from the One Shot Ship marketplace, not a marketplace of its own', () => {
+  // User behaviour: people install heads-up with `/plugin marketplace add 501336North/one-shot-ship-plugin` and
+  // `/plugin install heads-up@one-shot-ship-plugin`, and see OSS listed next to it.
+  // Business rule: heads-up is listed only in the OSS marketplace; this repo has no marketplace of its own, and the
+  // README's install steps name the OSS marketplace.
+  assert.equal(existsSync(join(repoRoot, '.claude-plugin/marketplace.json')), false, 'no marketplace in this repo');
+  const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+  assert.ok(readme.includes('/plugin marketplace add 501336North/one-shot-ship-plugin'), 'README adds the OSS marketplace');
+  assert.ok(readme.includes('/plugin install heads-up@one-shot-ship-plugin'), 'README installs heads-up from it');
+  assert.ok(!readme.includes('/plugin marketplace add 501336North/heads-up'), 'README no longer names the old marketplace');
 });
 
 /**
